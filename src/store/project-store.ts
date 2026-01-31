@@ -11,6 +11,12 @@ import type {
   Project,
 } from '@/types'
 
+interface HistoryEntry {
+  scenes: Scene[]
+  clips: Clip[]
+  timestamp: number
+}
+
 interface ProjectStore {
   // Project
   project: Project | null
@@ -58,6 +64,13 @@ interface ProjectStore {
   // Global
   globalStyle: string
   setGlobalStyle: (style: string) => void
+
+  // History (Undo/Redo)
+  history: HistoryEntry[]
+  historyIndex: number
+  saveToHistory: () => void
+  undo: () => void
+  redo: () => void
 
   // Reset
   reset: () => void
@@ -167,6 +180,46 @@ export const useProjectStore = create<ProjectStore>()(
       globalStyle: '',
       setGlobalStyle: (globalStyle) => set({ globalStyle }),
 
+      // History (Undo/Redo)
+      history: [],
+      historyIndex: -1,
+
+      saveToHistory: () => set((state) => {
+        const { scenes, clips, history, historyIndex } = state
+        // Truncate future history if we're not at the end
+        const newHistory = history.slice(0, historyIndex + 1)
+        newHistory.push({
+          scenes: JSON.parse(JSON.stringify(scenes)),
+          clips: JSON.parse(JSON.stringify(clips)),
+          timestamp: Date.now(),
+        })
+        // Keep last 50 entries
+        if (newHistory.length > 50) newHistory.shift()
+        return { history: newHistory, historyIndex: newHistory.length - 1 }
+      }),
+
+      undo: () => set((state) => {
+        const { history, historyIndex } = state
+        if (historyIndex <= 0) return state
+        const prev = history[historyIndex - 1]
+        return {
+          scenes: JSON.parse(JSON.stringify(prev.scenes)),
+          clips: JSON.parse(JSON.stringify(prev.clips)),
+          historyIndex: historyIndex - 1,
+        }
+      }),
+
+      redo: () => set((state) => {
+        const { history, historyIndex } = state
+        if (historyIndex >= history.length - 1) return state
+        const next = history[historyIndex + 1]
+        return {
+          scenes: JSON.parse(JSON.stringify(next.scenes)),
+          clips: JSON.parse(JSON.stringify(next.clips)),
+          historyIndex: historyIndex + 1,
+        }
+      }),
+
       // Reset
       reset: () => set({
         project: null,
@@ -178,6 +231,8 @@ export const useProjectStore = create<ProjectStore>()(
         videos: {},
         timeline: initialTimelineState,
         globalStyle: '',
+        history: [],
+        historyIndex: -1,
       }),
     }),
     {
@@ -189,7 +244,9 @@ export const useProjectStore = create<ProjectStore>()(
         scenes: state.scenes,
         clips: state.clips,
         globalStyle: state.globalStyle,
-        // Don't persist: audioFile (has File object), frames/videos (large blobs), timeline (UI state)
+        // Persist timeline zoom only
+        timeline: { zoom: state.timeline.zoom },
+        // Don't persist: audioFile (has File object), frames/videos (large blobs), rest of timeline (UI state)
       }),
     }
   )

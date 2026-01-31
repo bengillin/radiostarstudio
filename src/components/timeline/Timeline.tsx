@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { Maximize2 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { formatTime } from '@/lib/utils'
 import type { Scene, Clip } from '@/types'
@@ -21,11 +22,21 @@ export function Timeline({
   selectedClipId,
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { scenes, clips, videos } = useProjectStore()
+  const { scenes, clips, videos, timeline, setTimeline, updateClip, saveToHistory } = useProjectStore()
 
-  const [zoom, setZoom] = useState(50) // pixels per second
+  const zoom = timeline.zoom
+  const setZoom = (newZoom: number) => setTimeline({ zoom: newZoom })
   const [scrollX, setScrollX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+
+  // Trim state
+  const [trimState, setTrimState] = useState<{
+    clipId: string
+    edge: 'start' | 'end'
+    initialTime: number
+    initialMouseX: number
+  } | null>(null)
+  const [hoveredEdge, setHoveredEdge] = useState<{ clipId: string; edge: 'start' | 'end' } | null>(null)
 
   const timelineWidth = duration * zoom
   const visibleWidth = containerRef.current?.clientWidth || 800
@@ -68,6 +79,72 @@ export function Timeline({
     }
   }, [isDragging, handlePlayheadDrag, handleMouseUp])
 
+  // Zoom to fit
+  const zoomToFit = useCallback(() => {
+    if (!containerRef.current) return
+    const containerWidth = containerRef.current.clientWidth - 64 // minus track labels
+    const newZoom = Math.max(10, Math.min(200, containerWidth / duration))
+    setZoom(Math.round(newZoom))
+  }, [duration, setZoom])
+
+  // Trim handlers
+  const getEdgeAtPosition = useCallback((clipEl: HTMLElement, mouseX: number): 'start' | 'end' | null => {
+    const rect = clipEl.getBoundingClientRect()
+    if (mouseX - rect.left < 8) return 'start'
+    if (rect.right - mouseX < 8) return 'end'
+    return null
+  }, [])
+
+  const handleTrimStart = useCallback((clipId: string, edge: 'start' | 'end', e: React.MouseEvent) => {
+    const clip = clips.find(c => c.id === clipId)
+    if (!clip) return
+    e.stopPropagation()
+    saveToHistory()
+    setTrimState({
+      clipId,
+      edge,
+      initialTime: edge === 'start' ? clip.startTime : clip.endTime,
+      initialMouseX: e.clientX,
+    })
+  }, [clips, saveToHistory])
+
+  const handleTrimMove = useCallback((e: MouseEvent) => {
+    if (!trimState) return
+    const deltaX = e.clientX - trimState.initialMouseX
+    const deltaTime = deltaX / zoom
+    const newTime = Math.max(0, trimState.initialTime + deltaTime)
+
+    const clip = clips.find(c => c.id === trimState.clipId)
+    if (!clip) return
+
+    if (trimState.edge === 'start') {
+      // Don't let start time go past end time
+      if (newTime < clip.endTime) {
+        updateClip(trimState.clipId, { startTime: newTime })
+      }
+    } else {
+      // Don't let end time go before start time
+      if (newTime > clip.startTime) {
+        updateClip(trimState.clipId, { endTime: Math.min(newTime, duration) })
+      }
+    }
+  }, [trimState, zoom, clips, updateClip, duration])
+
+  const handleTrimEnd = useCallback(() => {
+    setTrimState(null)
+  }, [])
+
+  useEffect(() => {
+    if (trimState) {
+      window.addEventListener('mousemove', handleTrimMove)
+      window.addEventListener('mouseup', handleTrimEnd)
+      return () => {
+        window.removeEventListener('mousemove', handleTrimMove)
+        window.removeEventListener('mouseup', handleTrimEnd)
+      }
+    }
+  }, [trimState, handleTrimMove, handleTrimEnd])
+
   // Generate ruler marks
   const rulerMarks = []
   const interval = zoom >= 100 ? 1 : zoom >= 50 ? 5 : zoom >= 20 ? 10 : 30
@@ -95,6 +172,14 @@ export function Timeline({
           className="w-24 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer"
         />
         <span className="text-xs text-white/40 w-12">{zoom}px/s</span>
+        <button
+          onClick={zoomToFit}
+          className="ml-2 px-2 py-1 text-xs bg-white/10 hover:bg-white/20 rounded transition-colors flex items-center gap-1"
+          title="Zoom to fit"
+        >
+          <Maximize2 className="w-3 h-3" />
+          Fit
+        </button>
       </div>
 
       {/* Timeline content */}
@@ -149,26 +234,50 @@ export function Timeline({
               {clips.map((clip) => {
                 const hasVideo = clip.video || videos[`video-${clip.id}`]
                 const isSelected = selectedClipId === clip.id
+                const isHoveredStart = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'start'
+                const isHoveredEnd = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'end'
+                const isTrimming = trimState?.clipId === clip.id
                 return (
                   <div
                     key={clip.id}
-                    className={`absolute top-1 bottom-1 rounded border flex items-center px-2 overflow-hidden cursor-pointer transition-colors ${
+                    className={`absolute top-1 bottom-1 rounded border flex items-center overflow-hidden transition-colors ${
                       isSelected
                         ? 'bg-brand-500/40 border-brand-500'
                         : hasVideo
                         ? 'bg-green-500/30 border-green-500/50 hover:bg-green-500/40'
                         : 'bg-white/10 border-white/20 hover:bg-white/20'
-                    }`}
+                    } ${isTrimming || isHoveredStart || isHoveredEnd ? 'cursor-ew-resize' : 'cursor-pointer'}`}
                     style={{
                       left: clip.startTime * zoom,
                       width: Math.max((clip.endTime - clip.startTime) * zoom, 40),
                     }}
                     onClick={(e) => {
-                      e.stopPropagation()
-                      onClipSelect?.(clip.id)
+                      if (!hoveredEdge) {
+                        e.stopPropagation()
+                        onClipSelect?.(clip.id)
+                      }
+                    }}
+                    onMouseMove={(e) => {
+                      const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
+                      if (edge) {
+                        setHoveredEdge({ clipId: clip.id, edge })
+                      } else {
+                        setHoveredEdge(null)
+                      }
+                    }}
+                    onMouseLeave={() => setHoveredEdge(null)}
+                    onMouseDown={(e) => {
+                      const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
+                      if (edge) {
+                        handleTrimStart(clip.id, edge, e)
+                      }
                     }}
                   >
-                    <span className="text-[10px] text-white truncate">{clip.title}</span>
+                    {/* Start edge handle */}
+                    <div className={`absolute left-0 top-0 bottom-0 w-2 ${isHoveredStart ? 'bg-brand-500/50' : ''}`} />
+                    <span className="text-[10px] text-white truncate px-2">{clip.title}</span>
+                    {/* End edge handle */}
+                    <div className={`absolute right-0 top-0 bottom-0 w-2 ${isHoveredEnd ? 'bg-brand-500/50' : ''}`} />
                   </div>
                 )
               })}

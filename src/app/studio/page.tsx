@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
@@ -10,6 +10,7 @@ import {
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
+import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { formatTime } from '@/lib/utils'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
 
@@ -24,8 +25,17 @@ const STEPS: { id: Step; label: string; icon: typeof Music }[] = [
 ]
 
 export default function StudioPage() {
+  return (
+    <ToastProvider>
+      <StudioPageContent />
+    </ToastProvider>
+  )
+}
+
+function StudioPageContent() {
   const router = useRouter()
   const audioRef = useRef<HTMLAudioElement>(null)
+  const { showToast } = useToast()
   const {
     audioFile,
     transcript,
@@ -36,12 +46,16 @@ export default function StudioPage() {
     clips,
     setClips,
     updateClip,
+    deleteClip,
     frames,
     setFrame,
     videos,
     setVideo,
     globalStyle,
     setGlobalStyle,
+    saveToHistory,
+    undo,
+    redo,
   } = useProjectStore()
 
   const [isPlaying, setIsPlaying] = useState(false)
@@ -117,7 +131,7 @@ export default function StudioPage() {
     }
   }, [])
 
-  const togglePlayback = () => {
+  const togglePlayback = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
 
@@ -127,14 +141,66 @@ export default function StudioPage() {
       audio.play()
     }
     setIsPlaying(!isPlaying)
-  }
+  }, [isPlaying])
 
-  const handleSeek = (time: number) => {
+  const handleSeek = useCallback((time: number) => {
     const audio = audioRef.current
     if (!audio) return
-    audio.currentTime = time
-    setCurrentTime(time)
-  }
+    const clampedTime = Math.max(0, Math.min(time, audioFile?.duration || 0))
+    audio.currentTime = clampedTime
+    setCurrentTime(clampedTime)
+  }, [audioFile?.duration])
+
+  // Delete selected clip
+  const handleDeleteSelectedClip = useCallback(() => {
+    if (!selectedClipId) return
+    saveToHistory()
+    deleteClip(selectedClipId)
+    setSelectedClipId(null)
+  }, [selectedClipId, saveToHistory, deleteClip])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in input/textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault()
+          togglePlayback()
+          break
+        case 'ArrowLeft':
+          e.preventDefault()
+          handleSeek(currentTime - 5)
+          break
+        case 'ArrowRight':
+          e.preventDefault()
+          handleSeek(currentTime + 5)
+          break
+        case 'Delete':
+        case 'Backspace':
+          if (selectedClipId) {
+            e.preventDefault()
+            handleDeleteSelectedClip()
+          }
+          break
+        case 'KeyZ':
+          if (e.metaKey || e.ctrlKey) {
+            e.preventDefault()
+            if (e.shiftKey) {
+              redo()
+            } else {
+              undo()
+            }
+          }
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [currentTime, selectedClipId, isPlaying, togglePlayback, handleSeek, handleDeleteSelectedClip, undo, redo])
 
   const handleTranscribe = async () => {
     if (!audioFile?.file) return
@@ -213,7 +279,7 @@ export default function StudioPage() {
             id: `clip-${segment.id}`,
             sceneId: matchingScene.id,
             segmentId: segment.id,
-            title: `${segment.type.charAt(0).toUpperCase() + segment.type.slice(1)} - ${segment.text.slice(0, 30)}...`,
+            title: `${(segment.type || 'clip').charAt(0).toUpperCase() + (segment.type || 'clip').slice(1)} - ${(segment.text || '').slice(0, 30)}${segment.text && segment.text.length > 30 ? '...' : ''}`,
             startTime: segment.start,
             endTime: segment.end,
             order: segIndex,
@@ -373,16 +439,19 @@ export default function StudioPage() {
           clearInterval(pollInterval)
           setIsExporting(false)
           // In production, would trigger download here
-          alert('Export complete! (Demo - download would start here)')
+          showToast('Export complete! Download starting...', 'success')
         } else if (status.status === 'failed') {
           clearInterval(pollInterval)
           setIsExporting(false)
           setExportError(status.error || 'Export failed')
+          showToast(status.error || 'Export failed', 'error')
         }
       }, 1000)
     } catch (error) {
       console.error('Export error:', error)
-      setExportError(error instanceof Error ? error.message : 'Failed to export')
+      const errorMsg = error instanceof Error ? error.message : 'Failed to export'
+      setExportError(errorMsg)
+      showToast(errorMsg, 'error')
       setIsExporting(false)
     }
   }

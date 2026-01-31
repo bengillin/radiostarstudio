@@ -154,8 +154,8 @@ interface TranscriptSegment {
 - [x] Scene planning UI panel
 - [x] AI prompt for 5W extraction (who, what, when, where, why)
 - [x] Visual aesthetic definition
-- [ ] Scene → Clip hierarchy
-- [ ] Manual override/editing
+- [x] Scene → Clip hierarchy
+- [x] Manual override/editing
 
 ### Types Needed
 ```typescript
@@ -206,7 +206,7 @@ interface VisualAesthetic {
 
 ### Implementation Log
 
-**2026-01-31: Phase 2 In Progress**
+**2026-01-31: Phase 2 Complete**
 - Created scene planning API route (`src/app/api/plan-scenes/route.ts`):
   - Accepts transcript and optional visual style
   - Uses Gemini to break song into 3-6 visual scenes
@@ -216,7 +216,9 @@ interface VisualAesthetic {
   - "Plan Scenes with AI" button with loading state
   - Expandable scene cards showing all 5 Ws
   - Icons for each W category (Users, Clapperboard, Clock, MapPin, Heart)
-- Remaining: Scene → Clip hierarchy, manual editing of 5 Ws
+  - **Inline editable inputs** for all 5 W fields
+  - **Auto-generated clips** from transcript segments mapped to scenes by time overlap
+  - Clips displayed within expanded scene cards, clickable to seek
 
 ---
 
@@ -494,8 +496,8 @@ interface ProjectStore {
 |-------|--------|-------|
 | Phase 0: Foundation | ✅ Complete | Next.js 15, Tailwind, Zustand, types |
 | Phase 1: Audio | ✅ Complete | Waveform, transcription API, playback |
-| Phase 2: Scene Planning | 🔄 In Progress | 5 Ws working, need clip hierarchy |
-| Phase 3: Frame Generation | ⬜ Not Started | |
+| Phase 2: Scene Planning | ✅ Complete | 5 Ws, editable fields, auto-clips |
+| Phase 3: Frame Generation | 🔄 Up Next | |
 | Phase 4: Video Clips | ⬜ Not Started | |
 | Phase 5: Timeline | ⬜ Not Started | |
 | Phase 6: Export | ⬜ Not Started | |

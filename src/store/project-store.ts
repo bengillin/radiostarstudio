@@ -82,7 +82,13 @@ export const useProjectStore = create<ProjectStore>()(
 
       // Audio
       audioFile: null,
-      setAudioFile: (audioFile) => set({ audioFile }),
+      setAudioFile: (audioFile) => set({
+        audioFile,
+        // Clear transcript when loading new audio
+        transcript: [],
+        scenes: [],
+        clips: [],
+      }),
 
       // Transcript
       transcript: [],

@@ -59,6 +59,23 @@ export default function StudioPage() {
   const [motionPrompt, setMotionPrompt] = useState('')
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exportJobId, setExportJobId] = useState<string | null>(null)
+  const [exportSettings, setExportSettings] = useState<{
+    resolution: '1080p' | '720p' | '4k'
+    format: 'mp4' | 'webm' | 'mov'
+    fps: number
+  }>({
+    resolution: '1080p',
+    format: 'mp4',
+    fps: 30,
+  })
+
+  // Check if any clips have videos generated
+  const clipsWithVideos = clips.filter(c => c.video || videos[`video-${c.id}`])
+  const hasVideos = clipsWithVideos.length > 0
 
   // Determine current step based on state
   const currentStep: Step = !audioFile
@@ -67,6 +84,8 @@ export default function StudioPage() {
     ? 'transcribe'
     : scenes.length === 0
     ? 'plan'
+    : hasVideos
+    ? 'export'
     : 'generate'
 
   // Redirect to home if no audio
@@ -303,6 +322,68 @@ export default function StudioPage() {
       setVideoError(error instanceof Error ? error.message : 'Failed to generate video')
     } finally {
       setIsGeneratingVideo(false)
+    }
+  }
+
+  const handleExport = async () => {
+    if (clipsWithVideos.length === 0) return
+
+    setIsExporting(true)
+    setExportProgress(0)
+    setExportError(null)
+
+    try {
+      // Prepare clips data for export
+      const exportClips = clipsWithVideos.map(clip => {
+        const video = clip.video || videos[`video-${clip.id}`]
+        return {
+          id: clip.id,
+          videoUrl: video && typeof video === 'object' ? video.url : '',
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+        }
+      }).filter(c => c.videoUrl)
+
+      const response = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clips: exportClips,
+          audioUrl: audioFile?.url,
+          settings: exportSettings,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Export failed')
+      }
+
+      setExportJobId(data.jobId)
+
+      // Poll for progress
+      const pollInterval = setInterval(async () => {
+        const statusResponse = await fetch(`/api/export?jobId=${data.jobId}`)
+        const status = await statusResponse.json()
+
+        setExportProgress(status.progress || 0)
+
+        if (status.status === 'complete') {
+          clearInterval(pollInterval)
+          setIsExporting(false)
+          // In production, would trigger download here
+          alert('Export complete! (Demo - download would start here)')
+        } else if (status.status === 'failed') {
+          clearInterval(pollInterval)
+          setIsExporting(false)
+          setExportError(status.error || 'Export failed')
+        }
+      }, 1000)
+    } catch (error) {
+      console.error('Export error:', error)
+      setExportError(error instanceof Error ? error.message : 'Failed to export')
+      setIsExporting(false)
     }
   }
 
@@ -939,6 +1020,105 @@ export default function StudioPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Export (shown when videos exist) */}
+            {currentStep === 'export' && (
+              <div>
+                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                  Export Video
+                </h3>
+                <div className="space-y-4">
+                  {/* Export stats */}
+                  <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                    <p className="text-sm text-white/70">
+                      {clipsWithVideos.length} video clip{clipsWithVideos.length !== 1 ? 's' : ''} ready
+                    </p>
+                    <p className="text-xs text-white/40 mt-1">
+                      Total duration: {formatTime(audioFile?.duration || 0)}
+                    </p>
+                  </div>
+
+                  {/* Settings */}
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs text-white/40 uppercase block mb-1">Resolution</label>
+                      <select
+                        value={exportSettings.resolution}
+                        onChange={(e) => setExportSettings(s => ({ ...s, resolution: e.target.value as '1080p' | '720p' | '4k' }))}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                      >
+                        <option value="720p">720p (HD)</option>
+                        <option value="1080p">1080p (Full HD)</option>
+                        <option value="4k">4K (Ultra HD)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 uppercase block mb-1">Format</label>
+                      <select
+                        value={exportSettings.format}
+                        onChange={(e) => setExportSettings(s => ({ ...s, format: e.target.value as 'mp4' | 'webm' | 'mov' }))}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                      >
+                        <option value="mp4">MP4</option>
+                        <option value="webm">WebM</option>
+                        <option value="mov">MOV</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 uppercase block mb-1">Frame Rate</label>
+                      <select
+                        value={exportSettings.fps}
+                        onChange={(e) => setExportSettings(s => ({ ...s, fps: Number(e.target.value) }))}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                      >
+                        <option value="24">24 fps (Cinematic)</option>
+                        <option value="30">30 fps (Standard)</option>
+                        <option value="60">60 fps (Smooth)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  {isExporting && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-white/40 mb-1">
+                        <span>Exporting...</span>
+                        <span>{exportProgress}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-brand-500 transition-all duration-300"
+                          style={{ width: `${exportProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Export button */}
+                  <button
+                    onClick={handleExport}
+                    disabled={isExporting || clipsWithVideos.length === 0}
+                    className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isExporting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Exporting...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Export Video
+                      </>
+                    )}
+                  </button>
+
+                  {exportError && (
+                    <p className="text-xs text-red-400">{exportError}</p>
+                  )}
+                </div>
               </div>
             )}
 

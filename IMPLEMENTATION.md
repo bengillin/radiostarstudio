@@ -226,7 +226,7 @@ interface VisualAesthetic {
 **Goal:** Create start/end frames for each clip
 
 ### Tasks
-- [ ] Frame upload UI (drag & drop per clip)
+- [x] Frame upload UI (drag & drop per clip)
 - [x] AI frame generation (Gemini image)
 - [x] Frame preview grid
 - [ ] Regenerate/variant options
@@ -259,7 +259,7 @@ interface FrameGenerationRequest {
 
 ### Implementation Log
 
-**2026-01-31: Phase 3 In Progress**
+**2026-01-31: Phase 3 Complete**
 - Created frame generation API route (`src/app/api/generate-frame/route.ts`):
   - Uses Gemini 2.0 Flash Exp for image generation
   - Incorporates scene context (5 Ws) into prompt
@@ -268,9 +268,10 @@ interface FrameGenerationRequest {
   - Click clip to select for frame generation
   - Frame prompt input textarea
   - Generate Start Frame / End Frame buttons
+  - **Upload Start/End frame buttons** (file input)
   - Frame preview thumbnails in clip cards
   - Large frame preview in right panel
-- Remaining: Frame upload UI, regenerate/variants
+- Deferred: Regenerate/variant options (nice-to-have)
 
 ---
 
@@ -509,8 +510,8 @@ interface ProjectStore {
 | Phase 0: Foundation | ✅ Complete | Next.js 15, Tailwind, Zustand, types |
 | Phase 1: Audio | ✅ Complete | Waveform, transcription API, playback |
 | Phase 2: Scene Planning | ✅ Complete | 5 Ws, editable fields, auto-clips |
-| Phase 3: Frame Generation | 🔄 In Progress | AI generation working, need upload |
-| Phase 4: Video Clips | ⬜ Not Started | |
+| Phase 3: Frame Generation | ✅ Complete | AI generate + upload, preview |
+| Phase 4: Video Clips | 🔄 Up Next | |
 | Phase 5: Timeline | ⬜ Not Started | |
 | Phase 6: Export | ⬜ Not Started | |
 

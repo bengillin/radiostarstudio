@@ -1,11 +1,28 @@
 import { GoogleGenAI } from '@google/genai'
 
-// Model selection
+// Available models
+export const AVAILABLE_MODELS = {
+  text: [
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', description: 'Most capable' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: 'Fast and efficient' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Legacy fast model' },
+  ],
+  image: [
+    { id: 'imagen-4.0-generate-001', name: 'Imagen 4.0', description: 'Best quality' },
+    { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', description: 'Multimodal' },
+  ],
+  video: [
+    { id: 'veo-3.1-generate-preview', name: 'Veo 3.1', description: 'Highest quality' },
+    { id: 'veo-3.1-fast-generate-preview', name: 'Veo 3.1 Fast', description: 'Faster generation' },
+  ],
+} as const
+
+// Default model selection
 const MODELS = {
-  flash: 'gemini-2.0-flash',
-  pro: 'gemini-2.0-pro',
-  image: 'gemini-2.0-flash-exp', // For image generation
-  video: 'veo-2.0-generate-001',
+  flash: 'gemini-3-flash-preview',
+  pro: 'gemini-3-pro-preview',
+  image: 'imagen-4.0-generate-001',
+  video: 'veo-3.1-generate-preview',
 } as const
 
 function getClient() {

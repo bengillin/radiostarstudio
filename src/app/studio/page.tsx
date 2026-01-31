@@ -12,6 +12,7 @@ import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { formatTime } from '@/lib/utils'
+import { AVAILABLE_MODELS } from '@/lib/gemini'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
@@ -53,6 +54,8 @@ function StudioPageContent() {
     setVideo,
     globalStyle,
     setGlobalStyle,
+    modelSettings,
+    setModelSettings,
     saveToHistory,
     undo,
     redo,
@@ -321,6 +324,7 @@ function StudioPageContent() {
           type,
           scene,
           globalStyle,
+          model: modelSettings.image,
         }),
       })
 
@@ -370,6 +374,7 @@ function StudioPageContent() {
           motionPrompt,
           scene,
           globalStyle,
+          model: modelSettings.video,
         }),
       })
 
@@ -1208,6 +1213,39 @@ function StudioPageContent() {
                 </p>
               </div>
             )}
+
+            {/* Model Settings */}
+            <div>
+              <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                AI Models
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Image Generation</label>
+                  <select
+                    value={modelSettings.image}
+                    onChange={(e) => setModelSettings({ image: e.target.value })}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                  >
+                    {AVAILABLE_MODELS.image.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Video Generation</label>
+                  <select
+                    value={modelSettings.video}
+                    onChange={(e) => setModelSettings({ video: e.target.value })}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                  >
+                    {AVAILABLE_MODELS.video.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name} - {m.description}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
         </aside>
       </main>

@@ -11,6 +11,7 @@ import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
+import { DetailPanel } from '@/components/studio/DetailPanel'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
@@ -91,7 +92,7 @@ function StudioPageContent() {
   })
 
   // Check if any clips have videos generated
-  const clipsWithVideos = clips.filter(c => c.video || videos[`video-${c.id}`])
+  const clipsWithVideos = clips.filter((c: Clip) => c.video || videos[`video-${c.id}`])
   const hasVideos = clipsWithVideos.length > 0
 
   // Determine current step based on state
@@ -286,11 +287,11 @@ function StudioPageContent() {
         setScenes(newScenes)
 
         // Auto-generate clips from transcript segments mapped to scenes
-        const newClips = transcript.flatMap((segment, segIndex) => {
+        const newClips = transcript.flatMap((segment: TranscriptSegment, segIndex: number) => {
           // Find which scene this segment belongs to based on time overlap
-          const matchingScene = newScenes.find(scene =>
+          const matchingScene = newScenes.find((scene: Scene) =>
             segment.start >= scene.startTime && segment.start < scene.endTime
-          ) || newScenes.find(scene =>
+          ) || newScenes.find((scene: Scene) =>
             // Fallback: find scene that overlaps with segment
             segment.start < scene.endTime && segment.end > scene.startTime
           )
@@ -324,10 +325,10 @@ function StudioPageContent() {
   const handleGenerateFrame = async (type: 'start' | 'end') => {
     if (!selectedClipId || !framePrompt.trim()) return
 
-    const clip = clips.find(c => c.id === selectedClipId)
+    const clip = clips.find((c: Clip) => c.id === selectedClipId)
     if (!clip) return
 
-    const scene = scenes.find(s => s.id === clip.sceneId)
+    const scene = scenes.find((s: Scene) => s.id === clip.sceneId)
 
     setIsGeneratingFrame(true)
     setGeneratingFrameType(type)
@@ -371,10 +372,10 @@ function StudioPageContent() {
   const handleGenerateVideo = async () => {
     if (!selectedClipId) return
 
-    const clip = clips.find(c => c.id === selectedClipId)
+    const clip = clips.find((c: Clip) => c.id === selectedClipId)
     if (!clip?.startFrame) return
 
-    const scene = scenes.find(s => s.id === clip.sceneId)
+    const scene = scenes.find((s: Scene) => s.id === clip.sceneId)
     const startFrameUrl = typeof clip.startFrame === 'object' ? clip.startFrame.url : ''
 
     if (!startFrameUrl) return
@@ -424,7 +425,7 @@ function StudioPageContent() {
 
     try {
       // Prepare clips data for export
-      const exportClips = clipsWithVideos.map(clip => {
+      const exportClips = clipsWithVideos.map((clip: Clip) => {
         const video = clip.video || videos[`video-${clip.id}`]
         return {
           id: clip.id,
@@ -432,7 +433,7 @@ function StudioPageContent() {
           startTime: clip.startTime,
           endTime: clip.endTime,
         }
-      }).filter(c => c.videoUrl)
+      }).filter((c: { videoUrl: string }) => c.videoUrl)
 
       const response = await fetch('/api/export', {
         method: 'POST',
@@ -481,8 +482,8 @@ function StudioPageContent() {
   }
 
   // Get selected clip and its scene
-  const selectedClip = clips.find(c => c.id === selectedClipId)
-  const selectedScene = selectedClip ? scenes.find(s => s.id === selectedClip.sceneId) : null
+  const selectedClip = clips.find((c: Clip) => c.id === selectedClipId)
+  const selectedScene = selectedClip ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
   const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
 
   // Auto-fill frame prompt when clip is selected
@@ -492,7 +493,7 @@ function StudioPageContent() {
     }
 
     // Find the transcript segment for this clip
-    const segment = transcript.find(s => s.id === selectedClip.segmentId)
+    const segment = transcript.find((s: TranscriptSegment) => s.id === selectedClip.segmentId)
     const clipText = segment?.text || selectedClip.title
 
     // Build prompt from scene context
@@ -610,7 +611,7 @@ function StudioPageContent() {
                   Transcript ({transcript.length} segments)
                 </h3>
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {transcript.map((segment) => (
+                  {transcript.map((segment: TranscriptSegment) => (
                     <div
                       key={segment.id}
                       className="p-3 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:border-white/20 transition-colors"
@@ -638,7 +639,7 @@ function StudioPageContent() {
                   Scenes ({scenes.length})
                 </h3>
                 <div className="space-y-2">
-                  {scenes.map((scene) => {
+                  {scenes.map((scene: Scene) => {
                     const isExpanded = expandedSceneId === scene.id
                     return (
                       <div
@@ -736,13 +737,13 @@ function StudioPageContent() {
 
                             {/* Clips in this scene */}
                             {(() => {
-                              const sceneClips = clips.filter(c => c.sceneId === scene.id)
+                              const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
                               if (sceneClips.length === 0) return null
                               return (
                                 <div className="mt-3 pt-3 border-t border-white/10">
                                   <p className="text-xs text-white/40 uppercase mb-2">Clips ({sceneClips.length})</p>
                                   <div className="space-y-2">
-                                    {sceneClips.map(clip => {
+                                    {sceneClips.map((clip: Clip) => {
                                       const isSelected = selectedClipId === clip.id
                                       const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
                                       const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
@@ -810,22 +811,41 @@ function StudioPageContent() {
 
         {/* Center - Preview / Timeline */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Preview area */}
-          <div className="flex-1 flex items-center justify-center p-8">
-            <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
-              {transcript.length > 0 ? (
-                <div className="text-center p-8">
-                  <p className="text-white/60 mb-2">
-                    {transcript.find(s => s.start <= currentTime && s.end >= currentTime)?.text || 'Ready for scene planning'}
-                  </p>
-                  <p className="text-sm text-white/30">
-                    {formatTime(currentTime)} / {formatTime(audioFile.duration)}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-white/30">Transcribe audio to begin</p>
-              )}
-            </div>
+          {/* Preview area or Detail Panel */}
+          <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+            {selectedClip && selectedScene ? (
+              <div className="w-full h-full max-w-4xl">
+                <DetailPanel
+                  clip={selectedClip}
+                  scene={selectedScene}
+                  onClose={() => setSelectedClipId(null)}
+                  onGenerateFrame={handleGenerateFrame}
+                  onGenerateVideo={handleGenerateVideo}
+                  framePrompt={framePrompt}
+                  setFramePrompt={setFramePrompt}
+                  motionPrompt={motionPrompt}
+                  setMotionPrompt={setMotionPrompt}
+                  isGeneratingFrame={isGeneratingFrame}
+                  isGeneratingVideo={isGeneratingVideo}
+                  generatingFrameType={generatingFrameType}
+                />
+              </div>
+            ) : (
+              <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
+                {transcript.length > 0 ? (
+                  <div className="text-center p-8">
+                    <p className="text-white/60 mb-2">
+                      {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
+                    </p>
+                    <p className="text-sm text-white/30">
+                      {formatTime(currentTime)} / {formatTime(audioFile.duration)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-white/30">Transcribe audio to begin</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Waveform & Controls */}

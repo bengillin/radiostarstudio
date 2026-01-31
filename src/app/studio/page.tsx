@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
+import { Timeline } from '@/components/timeline'
 import { formatTime } from '@/lib/utils'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
 
@@ -628,9 +629,22 @@ export default function StudioPage() {
               currentTime={currentTime}
               duration={audioFile.duration}
               onSeek={handleSeek}
-              className="h-20"
+              className="h-16"
             />
           </div>
+
+          {/* Timeline (shown after scenes are planned) */}
+          {scenes.length > 0 && (
+            <div className="h-48 border-t border-white/10">
+              <Timeline
+                duration={audioFile.duration}
+                currentTime={currentTime}
+                onSeek={handleSeek}
+                onClipSelect={setSelectedClipId}
+                selectedClipId={selectedClipId}
+              />
+            </div>
+          )}
         </div>
 
         {/* Right panel - Actions */}

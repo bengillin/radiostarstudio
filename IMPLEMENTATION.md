@@ -89,11 +89,11 @@ radiostar/
 **Goal:** Upload audio, get word-level timestamps
 
 ### Tasks
-- [ ] Audio upload component (drag & drop)
-- [ ] Waveform visualization
-- [ ] Transcription API route (Gemini or Whisper)
-- [ ] Word-level timing extraction
-- [ ] Section detection (verse, chorus, bridge)
+- [x] Audio upload component (drag & drop)
+- [x] Waveform visualization
+- [x] Transcription API route (Gemini or Whisper)
+- [x] Word-level timing extraction
+- [x] Section detection (verse, chorus, bridge)
 
 ### Types Needed
 ```typescript
@@ -123,7 +123,24 @@ interface TranscriptSegment {
 ```
 
 ### Implementation Log
-<!-- Document what was done here -->
+
+**2026-01-31: Phase 1 Complete**
+- Created landing page with drag-drop audio upload
+- Audio file detected with duration using Web Audio API
+- Built `Waveform` component (`src/components/ui/Waveform.tsx`):
+  - Generates waveform data from audio buffer
+  - Renders bars on canvas with progress coloring
+  - Click-to-seek functionality
+- Created transcription API route (`src/app/api/transcribe/route.ts`):
+  - Accepts audio via FormData
+  - Converts to base64 for Gemini
+  - Returns word-level timestamps and segment detection (verse, chorus, bridge, etc.)
+- Studio page now has:
+  - 3-panel layout (properties, preview+timeline, actions)
+  - Audio playback with play/pause controls
+  - Waveform display with seek support
+  - Transcript segment list (clickable to seek)
+  - Transcription button with loading state
 
 ---
 
@@ -462,8 +479,8 @@ interface ProjectStore {
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 0: Foundation | ✅ Complete | Next.js 15, Tailwind, Zustand, types |
-| Phase 1: Audio | 🔄 Up Next | Landing page upload ready |
-| Phase 2: Scene Planning | ⬜ Not Started | |
+| Phase 1: Audio | ✅ Complete | Waveform, transcription API, playback |
+| Phase 2: Scene Planning | 🔄 Up Next | |
 | Phase 3: Frame Generation | ⬜ Not Started | |
 | Phase 4: Video Clips | ⬜ Not Started | |
 | Phase 5: Timeline | ⬜ Not Started | |

@@ -10,7 +10,7 @@ import {
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { formatTime } from '@/lib/utils'
-import type { TranscriptSegment, Scene } from '@/types'
+import type { TranscriptSegment, Scene, Clip } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
 
@@ -31,6 +31,9 @@ export default function StudioPage() {
     setTranscript,
     scenes,
     setScenes,
+    updateScene,
+    clips,
+    setClips,
     globalStyle,
     setGlobalStyle,
   } = useProjectStore()
@@ -158,7 +161,33 @@ export default function StudioPage() {
       }
 
       if (data.scenes) {
-        setScenes(data.scenes as Scene[])
+        const newScenes = data.scenes as Scene[]
+        setScenes(newScenes)
+
+        // Auto-generate clips from transcript segments mapped to scenes
+        const newClips = transcript.flatMap((segment, segIndex) => {
+          // Find which scene this segment belongs to based on time overlap
+          const matchingScene = newScenes.find(scene =>
+            segment.start >= scene.startTime && segment.start < scene.endTime
+          ) || newScenes.find(scene =>
+            // Fallback: find scene that overlaps with segment
+            segment.start < scene.endTime && segment.end > scene.startTime
+          )
+
+          if (!matchingScene) return []
+
+          return [{
+            id: `clip-${segment.id}`,
+            sceneId: matchingScene.id,
+            segmentId: segment.id,
+            title: `${segment.type.charAt(0).toUpperCase() + segment.type.slice(1)} - ${segment.text.slice(0, 30)}...`,
+            startTime: segment.start,
+            endTime: segment.end,
+            order: segIndex,
+          }]
+        })
+
+        setClips(newClips)
       }
       if (data.globalStyle && !globalStyle) {
         setGlobalStyle(data.globalStyle)
@@ -304,42 +333,101 @@ export default function StudioPage() {
                         </div>
 
                         {isExpanded && (
-                          <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-2">
+                          <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
+                            {/* Editable 5 Ws */}
                             <div className="flex items-start gap-2">
-                              <Users className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs text-white/40 uppercase">Who</p>
-                                <p className="text-sm text-white/70">{scene.who?.join(', ') || 'Not specified'}</p>
+                              <Users className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs text-white/40 uppercase mb-1">Who</p>
+                                <input
+                                  type="text"
+                                  value={scene.who?.join(', ') || ''}
+                                  onChange={(e) => updateScene(scene.id, { who: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                  placeholder="Characters/subjects..."
+                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                />
                               </div>
                             </div>
                             <div className="flex items-start gap-2">
-                              <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs text-white/40 uppercase">What</p>
-                                <p className="text-sm text-white/70">{scene.what || 'Not specified'}</p>
+                              <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs text-white/40 uppercase mb-1">What</p>
+                                <input
+                                  type="text"
+                                  value={scene.what || ''}
+                                  onChange={(e) => updateScene(scene.id, { what: e.target.value })}
+                                  placeholder="Action/event..."
+                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                />
                               </div>
                             </div>
                             <div className="flex items-start gap-2">
-                              <Clock className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs text-white/40 uppercase">When</p>
-                                <p className="text-sm text-white/70">{scene.when || 'Not specified'}</p>
+                              <Clock className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs text-white/40 uppercase mb-1">When</p>
+                                <input
+                                  type="text"
+                                  value={scene.when || ''}
+                                  onChange={(e) => updateScene(scene.id, { when: e.target.value })}
+                                  placeholder="Time period..."
+                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                />
                               </div>
                             </div>
                             <div className="flex items-start gap-2">
-                              <MapPin className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs text-white/40 uppercase">Where</p>
-                                <p className="text-sm text-white/70">{scene.where || 'Not specified'}</p>
+                              <MapPin className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs text-white/40 uppercase mb-1">Where</p>
+                                <input
+                                  type="text"
+                                  value={scene.where || ''}
+                                  onChange={(e) => updateScene(scene.id, { where: e.target.value })}
+                                  placeholder="Location..."
+                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                />
                               </div>
                             </div>
                             <div className="flex items-start gap-2">
-                              <Heart className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs text-white/40 uppercase">Why</p>
-                                <p className="text-sm text-white/70">{scene.why || 'Not specified'}</p>
+                              <Heart className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                              <div className="flex-1">
+                                <p className="text-xs text-white/40 uppercase mb-1">Why</p>
+                                <input
+                                  type="text"
+                                  value={scene.why || ''}
+                                  onChange={(e) => updateScene(scene.id, { why: e.target.value })}
+                                  placeholder="Mood/motivation..."
+                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                />
                               </div>
                             </div>
+
+                            {/* Clips in this scene */}
+                            {(() => {
+                              const sceneClips = clips.filter(c => c.sceneId === scene.id)
+                              if (sceneClips.length === 0) return null
+                              return (
+                                <div className="mt-3 pt-3 border-t border-white/10">
+                                  <p className="text-xs text-white/40 uppercase mb-2">Clips ({sceneClips.length})</p>
+                                  <div className="space-y-1">
+                                    {sceneClips.map(clip => (
+                                      <div
+                                        key={clip.id}
+                                        className="px-2 py-1.5 bg-white/5 rounded text-xs flex items-center justify-between cursor-pointer hover:bg-white/10"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleSeek(clip.startTime)
+                                        }}
+                                      >
+                                        <span className="text-white/70 truncate">{clip.title}</span>
+                                        <span className="text-white/40 flex-shrink-0 ml-2">
+                                          {formatTime(clip.startTime)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
+                            })()}
                           </div>
                         )}
                       </div>

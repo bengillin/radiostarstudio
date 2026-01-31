@@ -4,30 +4,42 @@ import { GoogleGenAI } from '@google/genai'
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 export async function POST(request: NextRequest) {
+  console.log('[transcribe] API called')
+
   if (!GEMINI_API_KEY) {
+    console.log('[transcribe] ERROR: No API key configured')
     return NextResponse.json(
       { error: 'GEMINI_API_KEY not configured' },
       { status: 500 }
     )
   }
 
+  console.log('[transcribe] API key present:', GEMINI_API_KEY.substring(0, 8) + '...')
+
   try {
     const formData = await request.formData()
     const audioFile = formData.get('audio') as File | null
 
     if (!audioFile) {
+      console.log('[transcribe] ERROR: No audio file in request')
       return NextResponse.json(
         { error: 'No audio file provided' },
         { status: 400 }
       )
     }
 
+    console.log('[transcribe] Got audio file:', audioFile.name, 'size:', audioFile.size, 'type:', audioFile.type)
+
     // Convert file to base64
     const arrayBuffer = await audioFile.arrayBuffer()
     const base64Audio = Buffer.from(arrayBuffer).toString('base64')
     const mimeType = audioFile.type || 'audio/mpeg'
 
+    console.log('[transcribe] Converted to base64, length:', base64Audio.length)
+
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+
+    console.log('[transcribe] Calling Gemini API...')
 
     // Use Gemini to transcribe with word-level timestamps
     const response = await ai.models.generateContent({
@@ -42,33 +54,17 @@ export async function POST(request: NextRequest) {
               },
             },
             {
-              text: `Transcribe this audio with precise word-level timestamps.
+              text: `Transcribe this audio and identify song sections.
 
-For each segment of the song (verse, chorus, bridge, etc.), provide:
-1. The segment type (verse, chorus, bridge, intro, outro, instrumental, spoken)
-2. Start and end times in seconds
-3. The full text of the segment
-4. Word-level timing for each word
+For each section (verse, chorus, bridge, intro, outro, instrumental), provide:
+- Section type
+- Start and end time in seconds
+- The lyrics/text for that section
 
-Return JSON in this exact format:
-{
-  "segments": [
-    {
-      "id": "unique-id",
-      "type": "verse",
-      "text": "full segment text here",
-      "start": 0.0,
-      "end": 15.5,
-      "words": [
-        {"text": "word1", "start": 0.0, "end": 0.5, "confidence": 0.95},
-        {"text": "word2", "start": 0.6, "end": 1.0, "confidence": 0.92}
-      ]
-    }
-  ],
-  "duration": 180.5
-}
+Return ONLY valid JSON in this format (no markdown, no extra text):
+{"segments":[{"id":"1","type":"verse","text":"lyrics here","start":0,"end":30,"words":[]}],"duration":180}
 
-Be precise with timing. If you can't determine exact word timing, estimate based on syllables and tempo.`,
+Keep it concise. Skip word-level timing (leave words array empty). Focus on accurate section boundaries.`,
             },
           ],
         },
@@ -78,13 +74,19 @@ Be precise with timing. If you can't determine exact word timing, estimate based
       },
     })
 
+    console.log('[transcribe] Gemini response received')
     const text = response.text || '{}'
+    console.log('[transcribe] Response text length:', text.length)
 
     // Parse and validate the response
     let result
     try {
       result = JSON.parse(text)
-    } catch {
+      console.log('[transcribe] Parsed JSON, segments:', result.segments?.length)
+    } catch (parseError) {
+      console.log('[transcribe] JSON parse failed:', parseError)
+      console.log('[transcribe] Raw text (first 500 chars):', text.substring(0, 500))
+      console.log('[transcribe] Raw text (last 500 chars):', text.substring(text.length - 500))
       // If JSON parsing fails, return a basic structure
       result = {
         segments: [
@@ -109,11 +111,13 @@ Be precise with timing. If you can't determine exact word timing, estimate based
       }))
     }
 
+    console.log('[transcribe] Success, returning result')
     return NextResponse.json(result)
   } catch (error) {
-    console.error('Transcription error:', error)
+    console.error('[transcribe] ERROR:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { error: 'Failed to transcribe audio' },
+      { error: 'Failed to transcribe audio', details: errorMessage },
       { status: 500 }
     )
   }

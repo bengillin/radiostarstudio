@@ -103,11 +103,12 @@ export default function StudioPage() {
         body: formData,
       })
 
-      if (!response.ok) {
-        throw new Error('Transcription failed')
-      }
-
       const data = await response.json()
+
+      if (!response.ok) {
+        console.error('Transcription API error:', data)
+        throw new Error(data.details || data.error || 'Transcription failed')
+      }
 
       if (data.segments) {
         setTranscript(data.segments as TranscriptSegment[])

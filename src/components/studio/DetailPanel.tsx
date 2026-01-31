@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import {
   X, ChevronDown, ChevronUp, Image, Video, Sparkles, Clock,
-  Check, Trash2, Play, Users, MapPin, Clapperboard, Heart
+  Check, Trash2, Play, Users, MapPin, Clapperboard, Heart, Loader2
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { formatTime } from '@/lib/utils'
@@ -122,7 +122,12 @@ export function DetailPanel({
               {expandedSection === 'start' && (
                 <div className="p-4 space-y-4">
                   {/* Active Frame Preview */}
-                  {activeStartFrame ? (
+                  {isGeneratingFrame && generatingFrameType === 'start' ? (
+                    <div className="aspect-video rounded-lg bg-gradient-to-br from-brand-500/20 to-purple-500/20 border border-brand-500/30 flex flex-col items-center justify-center gap-3 animate-pulse">
+                      <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+                      <p className="text-sm text-white/60">Generating frame...</p>
+                    </div>
+                  ) : activeStartFrame ? (
                     <div className="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/20">
                       <img
                         src={typeof activeStartFrame === 'object' ? activeStartFrame.url : ''}
@@ -137,10 +142,16 @@ export function DetailPanel({
                   )}
 
                   {/* Version History */}
-                  {startFrames.length > 0 && (
+                  {(startFrames.length > 0 || (isGeneratingFrame && generatingFrameType === 'start')) && (
                     <div>
                       <p className="text-xs text-white/40 mb-2">Version History</p>
                       <div className="flex gap-2 overflow-x-auto pb-2">
+                        {/* Generating placeholder */}
+                        {isGeneratingFrame && generatingFrameType === 'start' && (
+                          <div className="relative flex-shrink-0 w-20 h-14 rounded overflow-hidden border-2 border-brand-500/50 bg-gradient-to-br from-brand-500/20 to-purple-500/20 animate-pulse flex items-center justify-center">
+                            <Loader2 className="w-4 h-4 text-brand-500 animate-spin" />
+                          </div>
+                        )}
                         {startFrames.map((frame: Frame) => {
                           const isActive = activeStartFrame?.id === frame.id
                           return (
@@ -206,7 +217,12 @@ export function DetailPanel({
 
               {expandedSection === 'end' && (
                 <div className="p-4 space-y-4">
-                  {activeEndFrame ? (
+                  {isGeneratingFrame && generatingFrameType === 'end' ? (
+                    <div className="aspect-video rounded-lg bg-gradient-to-br from-brand-500/20 to-purple-500/20 border border-brand-500/30 flex flex-col items-center justify-center gap-3 animate-pulse">
+                      <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+                      <p className="text-sm text-white/60">Generating frame...</p>
+                    </div>
+                  ) : activeEndFrame ? (
                     <div className="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/20">
                       <img
                         src={typeof activeEndFrame === 'object' ? activeEndFrame.url : ''}
@@ -220,10 +236,16 @@ export function DetailPanel({
                     </div>
                   )}
 
-                  {endFrames.length > 0 && (
+                  {(endFrames.length > 0 || (isGeneratingFrame && generatingFrameType === 'end')) && (
                     <div>
                       <p className="text-xs text-white/40 mb-2">Version History</p>
                       <div className="flex gap-2 overflow-x-auto pb-2">
+                        {/* Generating placeholder */}
+                        {isGeneratingFrame && generatingFrameType === 'end' && (
+                          <div className="relative flex-shrink-0 w-20 h-14 rounded overflow-hidden border-2 border-brand-500/50 bg-gradient-to-br from-brand-500/20 to-purple-500/20 animate-pulse flex items-center justify-center">
+                            <Loader2 className="w-4 h-4 text-brand-500 animate-spin" />
+                          </div>
+                        )}
                         {endFrames.map((frame: Frame) => {
                           const isActive = activeEndFrame?.id === frame.id
                           return (
@@ -278,7 +300,15 @@ export function DetailPanel({
         {activeTab === 'video' && (
           <div className="space-y-4">
             {/* Active Video Preview */}
-            {activeVideo ? (
+            {isGeneratingVideo ? (
+              <div className="aspect-video rounded-lg bg-gradient-to-br from-purple-500/20 to-brand-500/20 border border-purple-500/30 flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-10 h-10 text-purple-500 animate-spin" />
+                <div className="text-center">
+                  <p className="text-sm text-white/80">Generating video...</p>
+                  <p className="text-xs text-white/40 mt-1">This may take a few minutes</p>
+                </div>
+              </div>
+            ) : activeVideo ? (
               <div className="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/20">
                 <video
                   src={typeof activeVideo === 'object' ? activeVideo.url : ''}

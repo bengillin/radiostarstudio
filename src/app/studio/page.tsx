@@ -5,12 +5,12 @@ import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart
+  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { formatTime } from '@/lib/utils'
-import type { TranscriptSegment, Scene, Clip } from '@/types'
+import type { TranscriptSegment, Scene, Clip, Frame } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
 
@@ -34,6 +34,9 @@ export default function StudioPage() {
     updateScene,
     clips,
     setClips,
+    updateClip,
+    frames,
+    setFrame,
     globalStyle,
     setGlobalStyle,
   } = useProjectStore()
@@ -45,6 +48,11 @@ export default function StudioPage() {
   const [isPlanning, setIsPlanning] = useState(false)
   const [planningError, setPlanningError] = useState<string | null>(null)
   const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null)
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [framePrompt, setFramePrompt] = useState('')
+  const [isGeneratingFrame, setIsGeneratingFrame] = useState(false)
+  const [frameError, setFrameError] = useState<string | null>(null)
+  const [generatingFrameType, setGeneratingFrameType] = useState<'start' | 'end'>('start')
 
   // Determine current step based on state
   const currentStep: Step = !audioFile
@@ -199,6 +207,56 @@ export default function StudioPage() {
       setIsPlanning(false)
     }
   }
+
+  const handleGenerateFrame = async (type: 'start' | 'end') => {
+    if (!selectedClipId || !framePrompt.trim()) return
+
+    const clip = clips.find(c => c.id === selectedClipId)
+    if (!clip) return
+
+    const scene = scenes.find(s => s.id === clip.sceneId)
+
+    setIsGeneratingFrame(true)
+    setGeneratingFrameType(type)
+    setFrameError(null)
+
+    try {
+      const response = await fetch('/api/generate-frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: framePrompt,
+          clipId: selectedClipId,
+          type,
+          scene,
+          globalStyle,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Frame generation failed')
+      }
+
+      if (data.frame) {
+        setFrame(data.frame as Frame)
+        // Update clip with frame reference
+        updateClip(selectedClipId, {
+          [type === 'start' ? 'startFrame' : 'endFrame']: data.frame,
+        })
+      }
+    } catch (error) {
+      console.error('Frame generation error:', error)
+      setFrameError(error instanceof Error ? error.message : 'Failed to generate frame')
+    } finally {
+      setIsGeneratingFrame(false)
+    }
+  }
+
+  // Get selected clip and its scene
+  const selectedClip = clips.find(c => c.id === selectedClipId)
+  const selectedScene = selectedClip ? scenes.find(s => s.id === selectedClip.sceneId) : null
 
   if (!audioFile) {
     return (
@@ -408,22 +466,58 @@ export default function StudioPage() {
                               return (
                                 <div className="mt-3 pt-3 border-t border-white/10">
                                   <p className="text-xs text-white/40 uppercase mb-2">Clips ({sceneClips.length})</p>
-                                  <div className="space-y-1">
-                                    {sceneClips.map(clip => (
-                                      <div
-                                        key={clip.id}
-                                        className="px-2 py-1.5 bg-white/5 rounded text-xs flex items-center justify-between cursor-pointer hover:bg-white/10"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleSeek(clip.startTime)
-                                        }}
-                                      >
-                                        <span className="text-white/70 truncate">{clip.title}</span>
-                                        <span className="text-white/40 flex-shrink-0 ml-2">
-                                          {formatTime(clip.startTime)}
-                                        </span>
-                                      </div>
-                                    ))}
+                                  <div className="space-y-2">
+                                    {sceneClips.map(clip => {
+                                      const isSelected = selectedClipId === clip.id
+                                      const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
+                                      const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
+                                      return (
+                                        <div
+                                          key={clip.id}
+                                          className={`p-2 rounded text-xs cursor-pointer transition-colors ${
+                                            isSelected
+                                              ? 'bg-brand-500/20 border border-brand-500/50'
+                                              : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                                          }`}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setSelectedClipId(isSelected ? null : clip.id)
+                                          }}
+                                        >
+                                          <div className="flex items-center justify-between mb-1">
+                                            <span className="text-white/70 truncate font-medium">{clip.title}</span>
+                                            <span className="text-white/40 flex-shrink-0 ml-2">
+                                              {formatTime(clip.startTime)}
+                                            </span>
+                                          </div>
+                                          {/* Frame thumbnails */}
+                                          {(startFrame || endFrame) && (
+                                            <div className="flex gap-1 mt-2">
+                                              {startFrame && (
+                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                  <img
+                                                    src={typeof startFrame === 'object' ? startFrame.url : ''}
+                                                    alt="Start frame"
+                                                    className="w-full h-full object-cover"
+                                                  />
+                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">S</span>
+                                                </div>
+                                              )}
+                                              {endFrame && (
+                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                  <img
+                                                    src={typeof endFrame === 'object' ? endFrame.url : ''}
+                                                    alt="End frame"
+                                                    className="w-full h-full object-cover"
+                                                  />
+                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">E</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
                                   </div>
                                 </div>
                               )
@@ -553,18 +647,115 @@ export default function StudioPage() {
             )}
 
             {currentStep === 'generate' && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Generation
-                </h3>
-                <div className="space-y-2">
-                  <button className="w-full py-3 px-4 bg-white/10 hover:bg-white/20 rounded-lg font-medium transition-colors">
-                    Generate Frames
-                  </button>
-                  <button className="w-full py-3 px-4 bg-white/10 hover:bg-white/20 rounded-lg font-medium transition-colors">
-                    Generate Videos
-                  </button>
-                </div>
+              <div className="space-y-6">
+                {/* Selected clip info */}
+                {selectedClip ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider">
+                        Selected Clip
+                      </h3>
+                      <button
+                        onClick={() => setSelectedClipId(null)}
+                        className="p-1 hover:bg-white/10 rounded"
+                      >
+                        <X className="w-3 h-3 text-white/40" />
+                      </button>
+                    </div>
+                    <div className="p-3 rounded-lg bg-brand-500/10 border border-brand-500/30">
+                      <p className="font-medium text-sm truncate">{selectedClip.title}</p>
+                      <p className="text-xs text-white/50 mt-1">
+                        {formatTime(selectedClip.startTime)} - {formatTime(selectedClip.endTime)}
+                      </p>
+                      {selectedScene && (
+                        <p className="text-xs text-white/40 mt-1">Scene: {selectedScene.title}</p>
+                      )}
+                    </div>
+
+                    {/* Frame Generation */}
+                    <div className="mt-4">
+                      <h4 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">
+                        Generate Frame
+                      </h4>
+                      <textarea
+                        value={framePrompt}
+                        onChange={(e) => setFramePrompt(e.target.value)}
+                        placeholder="Describe the frame... (e.g., 'Wide shot of singer on rooftop at sunset')"
+                        className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => handleGenerateFrame('start')}
+                          disabled={isGeneratingFrame || !framePrompt.trim()}
+                          className="flex-1 py-2 px-3 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                          {isGeneratingFrame && generatingFrameType === 'start' ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-4 h-4" />
+                          )}
+                          Start Frame
+                        </button>
+                        <button
+                          onClick={() => handleGenerateFrame('end')}
+                          disabled={isGeneratingFrame || !framePrompt.trim()}
+                          className="flex-1 py-2 px-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                          {isGeneratingFrame && generatingFrameType === 'end' ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-4 h-4" />
+                          )}
+                          End Frame
+                        </button>
+                      </div>
+                      {frameError && (
+                        <p className="text-xs text-red-400 mt-2">{frameError}</p>
+                      )}
+
+                      {/* Generated frames preview */}
+                      {(selectedClip.startFrame || selectedClip.endFrame) && (
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          {selectedClip.startFrame && (
+                            <div>
+                              <p className="text-xs text-white/40 mb-1">Start Frame</p>
+                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
+                                <img
+                                  src={typeof selectedClip.startFrame === 'object' ? selectedClip.startFrame.url : ''}
+                                  alt="Start frame"
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {selectedClip.endFrame && (
+                            <div>
+                              <p className="text-xs text-white/40 mb-1">End Frame</p>
+                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
+                                <img
+                                  src={typeof selectedClip.endFrame === 'object' ? selectedClip.endFrame.url : ''}
+                                  alt="End frame"
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                      Frame Generation
+                    </h3>
+                    <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <Image className="w-8 h-8 text-white/30 mx-auto mb-2" />
+                      <p className="text-sm text-white/50">Select a clip to generate frames</p>
+                      <p className="text-xs text-white/30 mt-1">Click on a clip in the left panel</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Maximize2 } from 'lucide-react'
+import { Maximize2, Scissors } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { formatTime } from '@/lib/utils'
 import type { Scene, Clip } from '@/types'
@@ -10,8 +10,8 @@ interface TimelineProps {
   duration: number
   currentTime: number
   onSeek: (time: number) => void
-  onClipSelect?: (clipId: string) => void
-  selectedClipId?: string | null
+  onClipSelect?: (clipId: string, multi?: boolean) => void
+  selectedClipIds?: string[]
 }
 
 export function Timeline({
@@ -19,10 +19,10 @@ export function Timeline({
   currentTime,
   onSeek,
   onClipSelect,
-  selectedClipId,
+  selectedClipIds = [],
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { scenes, clips, videos, timeline, setTimeline, updateClip, saveToHistory } = useProjectStore()
+  const { scenes, clips, videos, timeline, setTimeline, updateClip, addClip, saveToHistory } = useProjectStore()
 
   const zoom = timeline.zoom
   const setZoom = (newZoom: number) => setTimeline({ zoom: newZoom })
@@ -37,6 +37,15 @@ export function Timeline({
     initialMouseX: number
   } | null>(null)
   const [hoveredEdge, setHoveredEdge] = useState<{ clipId: string; edge: 'start' | 'end' } | null>(null)
+
+  // Drag state for reordering clips
+  const [dragState, setDragState] = useState<{
+    clipId: string
+    initialStartTime: number
+    initialEndTime: number
+    initialMouseX: number
+    currentOffset: number
+  } | null>(null)
 
   const timelineWidth = duration * zoom
   const visibleWidth = containerRef.current?.clientWidth || 800
@@ -145,6 +154,92 @@ export function Timeline({
     }
   }, [trimState, handleTrimMove, handleTrimEnd])
 
+  // Drag handlers for reordering clips
+  const handleDragStart = useCallback((clipId: string, e: React.MouseEvent) => {
+    const clip = clips.find((c: Clip) => c.id === clipId)
+    if (!clip) return
+    e.stopPropagation()
+    saveToHistory()
+    setDragState({
+      clipId,
+      initialStartTime: clip.startTime,
+      initialEndTime: clip.endTime,
+      initialMouseX: e.clientX,
+      currentOffset: 0,
+    })
+  }, [clips, saveToHistory])
+
+  const handleDragMove = useCallback((e: MouseEvent) => {
+    if (!dragState) return
+    const deltaX = e.clientX - dragState.initialMouseX
+    const deltaTime = deltaX / zoom
+    const clipDuration = dragState.initialEndTime - dragState.initialStartTime
+
+    // Calculate new start time, clamped to valid range
+    let newStartTime = Math.max(0, dragState.initialStartTime + deltaTime)
+    // Don't let clip extend past duration
+    if (newStartTime + clipDuration > duration) {
+      newStartTime = duration - clipDuration
+    }
+
+    const newEndTime = newStartTime + clipDuration
+
+    updateClip(dragState.clipId, {
+      startTime: newStartTime,
+      endTime: newEndTime
+    })
+
+    setDragState(prev => prev ? { ...prev, currentOffset: deltaTime } : null)
+  }, [dragState, zoom, duration, updateClip])
+
+  const handleDragEnd = useCallback(() => {
+    setDragState(null)
+  }, [])
+
+  useEffect(() => {
+    if (dragState) {
+      window.addEventListener('mousemove', handleDragMove)
+      window.addEventListener('mouseup', handleDragEnd)
+      return () => {
+        window.removeEventListener('mousemove', handleDragMove)
+        window.removeEventListener('mouseup', handleDragEnd)
+      }
+    }
+  }, [dragState, handleDragMove, handleDragEnd])
+
+  // Split clip at playhead
+  const handleSplitAtPlayhead = useCallback(() => {
+    // Find clip that contains the current time
+    const clipToSplit = clips.find((c: Clip) =>
+      currentTime > c.startTime && currentTime < c.endTime
+    )
+
+    if (!clipToSplit) return // No clip at playhead
+
+    saveToHistory()
+
+    // Update the original clip to end at playhead
+    updateClip(clipToSplit.id, { endTime: currentTime })
+
+    // Create a new clip starting at playhead
+    const newClip: Clip = {
+      id: `clip-${Date.now()}`,
+      sceneId: clipToSplit.sceneId,
+      segmentId: clipToSplit.segmentId,
+      title: `${clipToSplit.title} (split)`,
+      startTime: currentTime,
+      endTime: clipToSplit.endTime,
+      order: clipToSplit.order + 0.5, // Place after original in order
+    }
+
+    addClip(newClip)
+  }, [clips, currentTime, saveToHistory, updateClip, addClip])
+
+  // Check if playhead is inside a clip (for enabling split button)
+  const canSplit = clips.some((c: Clip) =>
+    currentTime > c.startTime && currentTime < c.endTime
+  )
+
   // Generate ruler marks
   const rulerMarks = []
   const interval = zoom >= 100 ? 1 : zoom >= 50 ? 5 : zoom >= 20 ? 10 : 30
@@ -179,6 +274,19 @@ export function Timeline({
         >
           <Maximize2 className="w-3 h-3" />
           Fit
+        </button>
+        <button
+          onClick={handleSplitAtPlayhead}
+          disabled={!canSplit}
+          className={`ml-2 px-2 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
+            canSplit
+              ? 'bg-white/10 hover:bg-white/20'
+              : 'bg-white/5 text-white/30 cursor-not-allowed'
+          }`}
+          title="Split clip at playhead (S)"
+        >
+          <Scissors className="w-3 h-3" />
+          Split
         </button>
       </div>
 
@@ -233,10 +341,21 @@ export function Timeline({
             <div className="ml-16 h-full relative">
               {clips.map((clip: Clip) => {
                 const hasVideo = clip.video || videos[`video-${clip.id}`]
-                const isSelected = selectedClipId === clip.id
+                const isSelected = selectedClipIds.includes(clip.id)
                 const isHoveredStart = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'start'
                 const isHoveredEnd = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'end'
                 const isTrimming = trimState?.clipId === clip.id
+                const isDraggingThis = dragState?.clipId === clip.id
+                const isAnyDragging = dragState !== null
+
+                // Determine cursor based on state
+                let cursor = 'cursor-grab'
+                if (isTrimming || isHoveredStart || isHoveredEnd) {
+                  cursor = 'cursor-ew-resize'
+                } else if (isDraggingThis) {
+                  cursor = 'cursor-grabbing'
+                }
+
                 return (
                   <div
                     key={clip.id}
@@ -246,18 +365,21 @@ export function Timeline({
                         : hasVideo
                         ? 'bg-green-500/30 border-green-500/50 hover:bg-green-500/40'
                         : 'bg-white/10 border-white/20 hover:bg-white/20'
-                    } ${isTrimming || isHoveredStart || isHoveredEnd ? 'cursor-ew-resize' : 'cursor-pointer'}`}
+                    } ${cursor} ${isDraggingThis ? 'z-30 shadow-lg ring-2 ring-brand-500' : ''} ${isAnyDragging && !isDraggingThis ? 'opacity-50' : ''}`}
                     style={{
                       left: clip.startTime * zoom,
                       width: Math.max((clip.endTime - clip.startTime) * zoom, 40),
                     }}
                     onClick={(e) => {
-                      if (!hoveredEdge) {
+                      if (!hoveredEdge && !dragState) {
                         e.stopPropagation()
-                        onClipSelect?.(clip.id)
+                        // Multi-select with Cmd/Ctrl or Shift
+                        const multi = e.metaKey || e.ctrlKey || e.shiftKey
+                        onClipSelect?.(clip.id, multi)
                       }
                     }}
                     onMouseMove={(e) => {
+                      if (dragState) return // Don't update edge state while dragging
                       const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
                       if (edge) {
                         setHoveredEdge({ clipId: clip.id, edge })
@@ -265,11 +387,16 @@ export function Timeline({
                         setHoveredEdge(null)
                       }
                     }}
-                    onMouseLeave={() => setHoveredEdge(null)}
+                    onMouseLeave={() => {
+                      if (!dragState) setHoveredEdge(null)
+                    }}
                     onMouseDown={(e) => {
                       const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
                       if (edge) {
                         handleTrimStart(clip.id, edge, e)
+                      } else {
+                        // Start drag for reordering
+                        handleDragStart(clip.id, e)
                       }
                     }}
                   >

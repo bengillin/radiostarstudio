@@ -49,6 +49,7 @@ function StudioPageContent() {
     setClips,
     updateClip,
     deleteClip,
+    addClip,
     frames,
     setFrame,
     videos,
@@ -57,6 +58,9 @@ function StudioPageContent() {
     setGlobalStyle,
     modelSettings,
     setModelSettings,
+    timeline,
+    selectClip,
+    clearSelection,
     saveToHistory,
     undo,
     redo,
@@ -69,7 +73,9 @@ function StudioPageContent() {
   const [isPlanning, setIsPlanning] = useState(false)
   const [planningError, setPlanningError] = useState<string | null>(null)
   const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null)
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  // Use store's multi-select, but keep a single "active" clip for detail panel
+  const selectedClipIds = timeline.selectedClipIds
+  const selectedClipId = selectedClipIds.length > 0 ? selectedClipIds[selectedClipIds.length - 1] : null
   const [framePrompt, setFramePrompt] = useState('')
   const [isGeneratingFrame, setIsGeneratingFrame] = useState(false)
   const [frameError, setFrameError] = useState<string | null>(null)
@@ -155,13 +161,41 @@ function StudioPageContent() {
     setCurrentTime(clampedTime)
   }, [audioFile?.duration])
 
-  // Delete selected clip
+  // Delete selected clip(s)
   const handleDeleteSelectedClip = useCallback(() => {
-    if (!selectedClipId) return
+    if (selectedClipIds.length === 0) return
     saveToHistory()
-    deleteClip(selectedClipId)
-    setSelectedClipId(null)
-  }, [selectedClipId, saveToHistory, deleteClip])
+    selectedClipIds.forEach((id: string) => deleteClip(id))
+    clearSelection()
+  }, [selectedClipIds, saveToHistory, deleteClip, clearSelection])
+
+  // Split clip at playhead
+  const handleSplitAtPlayhead = useCallback(() => {
+    // Find clip that contains the current time
+    const clipToSplit = clips.find((c: Clip) =>
+      currentTime > c.startTime && currentTime < c.endTime
+    )
+
+    if (!clipToSplit) return // No clip at playhead
+
+    saveToHistory()
+
+    // Update the original clip to end at playhead
+    updateClip(clipToSplit.id, { endTime: currentTime })
+
+    // Create a new clip starting at playhead
+    const newClip: Clip = {
+      id: `clip-${Date.now()}`,
+      sceneId: clipToSplit.sceneId,
+      segmentId: clipToSplit.segmentId,
+      title: `${clipToSplit.title} (split)`,
+      startTime: currentTime,
+      endTime: clipToSplit.endTime,
+      order: clipToSplit.order + 0.5, // Place after original in order
+    }
+
+    addClip(newClip)
+  }, [clips, currentTime, saveToHistory, updateClip, addClip])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -199,12 +233,19 @@ function StudioPageContent() {
             }
           }
           break
+        case 'KeyS':
+          // Split clip at playhead (if not Cmd/Ctrl+S which is save)
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            handleSplitAtPlayhead()
+          }
+          break
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [currentTime, selectedClipId, isPlaying, togglePlayback, handleSeek, handleDeleteSelectedClip, undo, redo])
+  }, [currentTime, selectedClipIds, isPlaying, togglePlayback, handleSeek, handleDeleteSelectedClip, handleSplitAtPlayhead, undo, redo])
 
   const handleTranscribe = async () => {
     if (!audioFile?.file) return
@@ -744,7 +785,7 @@ function StudioPageContent() {
                                   <p className="text-xs text-white/40 uppercase mb-2">Clips ({sceneClips.length})</p>
                                   <div className="space-y-2">
                                     {sceneClips.map((clip: Clip) => {
-                                      const isSelected = selectedClipId === clip.id
+                                      const isSelected = selectedClipIds.includes(clip.id)
                                       const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
                                       const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
                                       return (
@@ -757,7 +798,7 @@ function StudioPageContent() {
                                           }`}
                                           onClick={(e) => {
                                             e.stopPropagation()
-                                            setSelectedClipId(isSelected ? null : clip.id)
+                                            isSelected ? clearSelection() : selectClip(clip.id)
                                           }}
                                         >
                                           <div className="flex items-center justify-between mb-1">
@@ -818,7 +859,7 @@ function StudioPageContent() {
                 <DetailPanel
                   clip={selectedClip}
                   scene={selectedScene}
-                  onClose={() => setSelectedClipId(null)}
+                  onClose={() => clearSelection()}
                   onGenerateFrame={handleGenerateFrame}
                   onGenerateVideo={handleGenerateVideo}
                   framePrompt={framePrompt}
@@ -882,8 +923,8 @@ function StudioPageContent() {
                 duration={audioFile.duration}
                 currentTime={currentTime}
                 onSeek={handleSeek}
-                onClipSelect={setSelectedClipId}
-                selectedClipId={selectedClipId}
+                onClipSelect={selectClip}
+                selectedClipIds={selectedClipIds}
               />
             </div>
           )}
@@ -964,7 +1005,7 @@ function StudioPageContent() {
                         Selected Clip
                       </h3>
                       <button
-                        onClick={() => setSelectedClipId(null)}
+                        onClick={() => clearSelection()}
                         className="p-1 hover:bg-white/10 rounded"
                       >
                         <X className="w-3 h-3 text-white/40" />

@@ -340,12 +340,12 @@ interface GeneratedVideo {
 ```
 
 ### Tasks
-- [ ] Timeline container with zoom/scroll
-- [ ] Timeline ruler (time markers)
-- [ ] Story track (scenes + clips)
-- [ ] Audio track (waveform)
-- [ ] Assets track (video thumbnails)
-- [ ] Playhead with scrubbing
+- [x] Timeline container with zoom/scroll
+- [x] Timeline ruler (time markers)
+- [x] Story track (scenes + clips)
+- [x] Audio track (waveform)
+- [x] Assets track (video thumbnails)
+- [x] Playhead with scrubbing
 - [ ] Clip dragging/reordering
 - [ ] Clip trimming (drag edges)
 - [ ] Keyboard shortcuts (space=play, j/k=scrub)
@@ -382,7 +382,18 @@ interface DragState {
 ```
 
 ### Implementation Log
-<!-- Document what was done here -->
+
+**2026-01-31: Phase 5 Complete**
+- Created Timeline component (`src/components/timeline/Timeline.tsx`):
+  - Zoom controls (10-200 px/s)
+  - Time ruler with dynamic interval marks
+  - Scenes track showing scene blocks
+  - Clips track with color-coded blocks (green = has video)
+  - Videos track showing generated clips
+  - Draggable playhead with scrubbing
+  - Click anywhere to seek
+- Integrated into studio page (appears after scenes are planned)
+- Deferred: Clip drag/reorder, edge trimming, keyboard shortcuts
 
 ---
 
@@ -523,8 +534,8 @@ interface ProjectStore {
 | Phase 2: Scene Planning | ✅ Complete | 5 Ws, editable fields, auto-clips |
 | Phase 3: Frame Generation | ✅ Complete | AI generate + upload, preview |
 | Phase 4: Video Clips | ✅ Complete | Veo generation, motion prompts |
-| Phase 5: Timeline | 🔄 Up Next | |
-| Phase 6: Export | ⬜ Not Started | |
+| Phase 5: Timeline | ✅ Complete | 3 tracks, zoom, playhead |
+| Phase 6: Export | 🔄 Up Next | |
 
 ---
 

@@ -134,13 +134,16 @@ interface TranscriptSegment {
 - Created transcription API route (`src/app/api/transcribe/route.ts`):
   - Accepts audio via FormData
   - Converts to base64 for Gemini
-  - Returns word-level timestamps and segment detection (verse, chorus, bridge, etc.)
+  - Simplified prompt to avoid truncated JSON responses
+  - Added detailed logging for debugging
+  - Returns segment detection (verse, chorus, bridge, etc.)
 - Studio page now has:
   - 3-panel layout (properties, preview+timeline, actions)
   - Audio playback with play/pause controls
   - Waveform display with seek support
   - Transcript segment list (clickable to seek)
   - Transcription button with loading state
+- State management: auto-clear transcript/scenes when loading new audio
 
 ---
 

@@ -121,18 +121,24 @@ Replace preview area with detail panel when scene or clip is selected:
 - [x] Frame generation (Imagen 4.0, Gemini)
 - [x] Video generation (Veo 3.1)
 - [x] Export with settings
-- [x] Keyboard shortcuts (Space, arrows, Delete, Cmd+Z)
+- [x] Keyboard shortcuts (Space, arrows, Delete, Cmd+Z, S for split, ? for help)
 - [x] Toast notifications
 - [x] Undo/redo history
 - [x] Model selection UI
 - [x] Clip edge trimming
 - [x] Zoom to fit & persist
+- [x] Auto-generate frame prompts from context
+- [x] Auto-suggest visual style from transcription
+- [x] Detail panel with version history
+- [x] Drag to reorder clips
+- [x] Split clips at playhead
+- [x] Multi-select clips (Cmd/Ctrl+Click, Shift+Click)
+- [x] Keyboard shortcuts help modal (?)
+- [x] Optimistic UI loading states
 
 ### In Progress
 - [ ] Fix Imagen 4.0 empty response issue
-- [ ] Detail panel for scene/clip editing
 
 ### Next Up
-- [ ] Auto-generate frame prompts
-- [ ] Auto-suggest visual style
-- [ ] Version history gallery
+- [ ] Asset caching with IndexedDB
+- [ ] Lazy load thumbnails

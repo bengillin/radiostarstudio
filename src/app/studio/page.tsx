@@ -5,12 +5,13 @@ import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video
+  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video, Keyboard
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
+import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
@@ -96,6 +97,7 @@ function StudioPageContent() {
     format: 'mp4',
     fps: 30,
   })
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false)
 
   // Check if any clips have videos generated
   const clipsWithVideos = clips.filter((c: Clip) => c.video || videos[`video-${c.id}`])
@@ -238,6 +240,13 @@ function StudioPageContent() {
           if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
             handleSplitAtPlayhead()
+          }
+          break
+        case 'Slash':
+          // ? key (Shift + /)
+          if (e.shiftKey) {
+            e.preventDefault()
+            setShowShortcutsModal(true)
           }
           break
       }
@@ -624,7 +633,15 @@ function StudioPageContent() {
           })}
         </div>
 
-        <div className="w-24" />
+        <div className="w-24 flex justify-end">
+          <button
+            onClick={() => setShowShortcutsModal(true)}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="w-4 h-4 text-white/60" />
+          </button>
+        </div>
       </header>
 
       {/* Main content */}
@@ -1377,6 +1394,12 @@ function StudioPageContent() {
           </div>
         </aside>
       </main>
+
+      {/* Keyboard shortcuts modal */}
+      <KeyboardShortcutsModal
+        isOpen={showShortcutsModal}
+        onClose={() => setShowShortcutsModal(false)}
+      />
     </div>
   )
 }

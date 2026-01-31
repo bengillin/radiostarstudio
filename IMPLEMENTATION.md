@@ -279,11 +279,11 @@ interface FrameGenerationRequest {
 **Goal:** Generate video clips using Veo (or similar)
 
 ### Tasks
-- [ ] Video generation API route
-- [ ] Start frame → End frame interpolation
-- [ ] Motion prompt generation
-- [ ] Progress tracking / polling
-- [ ] Video preview player
+- [x] Video generation API route
+- [x] Start frame → End frame interpolation
+- [x] Motion prompt generation
+- [x] Progress tracking / polling
+- [x] Video preview player
 
 ### Types Needed
 ```typescript
@@ -308,7 +308,18 @@ interface GeneratedVideo {
 ```
 
 ### Implementation Log
-<!-- Document what was done here -->
+
+**2026-01-31: Phase 4 Complete**
+- Created video generation API route (`src/app/api/generate-video/route.ts`):
+  - Uses Veo 2.0 for video generation
+  - Takes start frame as input, incorporates scene context
+  - Polls for completion (up to 5 minutes)
+  - Returns video as base64 data URL
+- Updated studio page:
+  - Motion prompt input for video direction
+  - Generate Video Clip button (requires start frame)
+  - Video preview player with controls
+  - Progress indication during generation
 
 ---
 
@@ -511,8 +522,8 @@ interface ProjectStore {
 | Phase 1: Audio | ✅ Complete | Waveform, transcription API, playback |
 | Phase 2: Scene Planning | ✅ Complete | 5 Ws, editable fields, auto-clips |
 | Phase 3: Frame Generation | ✅ Complete | AI generate + upload, preview |
-| Phase 4: Video Clips | 🔄 Up Next | |
-| Phase 5: Timeline | ⬜ Not Started | |
+| Phase 4: Video Clips | ✅ Complete | Veo generation, motion prompts |
+| Phase 5: Timeline | 🔄 Up Next | |
 | Phase 6: Export | ⬜ Not Started | |
 
 ---

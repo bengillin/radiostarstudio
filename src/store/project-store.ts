@@ -1,0 +1,190 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import type {
+  AudioFile,
+  TranscriptSegment,
+  Scene,
+  Clip,
+  Frame,
+  GeneratedVideo,
+  TimelineState,
+  Project,
+} from '@/types'
+
+interface ProjectStore {
+  // Project
+  project: Project | null
+  setProject: (project: Project | null) => void
+
+  // Audio
+  audioFile: AudioFile | null
+  setAudioFile: (file: AudioFile | null) => void
+
+  // Transcript
+  transcript: TranscriptSegment[]
+  setTranscript: (segments: TranscriptSegment[]) => void
+
+  // Scenes & Clips
+  scenes: Scene[]
+  setScenes: (scenes: Scene[]) => void
+  addScene: (scene: Scene) => void
+  updateScene: (id: string, updates: Partial<Scene>) => void
+  deleteScene: (id: string) => void
+
+  clips: Clip[]
+  setClips: (clips: Clip[]) => void
+  addClip: (clip: Clip) => void
+  updateClip: (id: string, updates: Partial<Clip>) => void
+  deleteClip: (id: string) => void
+
+  // Frames
+  frames: Record<string, Frame>
+  setFrame: (frame: Frame) => void
+  deleteFrame: (id: string) => void
+
+  // Videos
+  videos: Record<string, GeneratedVideo>
+  setVideo: (video: GeneratedVideo) => void
+  updateVideoStatus: (id: string, status: GeneratedVideo['status'], error?: string) => void
+
+  // Timeline
+  timeline: TimelineState
+  setTimeline: (updates: Partial<TimelineState>) => void
+  setPlayheadTime: (time: number) => void
+  setIsPlaying: (playing: boolean) => void
+  selectClip: (id: string, multi?: boolean) => void
+  clearSelection: () => void
+
+  // Global
+  globalStyle: string
+  setGlobalStyle: (style: string) => void
+
+  // Reset
+  reset: () => void
+}
+
+const initialTimelineState: TimelineState = {
+  zoom: 50, // pixels per second
+  scrollX: 0,
+  playheadTime: 0,
+  isPlaying: false,
+  selectedClipIds: [],
+  selectedSceneId: null,
+  dragState: null,
+}
+
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set) => ({
+      // Project
+      project: null,
+      setProject: (project) => set({ project }),
+
+      // Audio
+      audioFile: null,
+      setAudioFile: (audioFile) => set({ audioFile }),
+
+      // Transcript
+      transcript: [],
+      setTranscript: (transcript) => set({ transcript }),
+
+      // Scenes
+      scenes: [],
+      setScenes: (scenes) => set({ scenes }),
+      addScene: (scene) => set((state) => ({ scenes: [...state.scenes, scene] })),
+      updateScene: (id, updates) => set((state) => ({
+        scenes: state.scenes.map((s) => s.id === id ? { ...s, ...updates } : s)
+      })),
+      deleteScene: (id) => set((state) => ({
+        scenes: state.scenes.filter((s) => s.id !== id)
+      })),
+
+      // Clips
+      clips: [],
+      setClips: (clips) => set({ clips }),
+      addClip: (clip) => set((state) => ({ clips: [...state.clips, clip] })),
+      updateClip: (id, updates) => set((state) => ({
+        clips: state.clips.map((c) => c.id === id ? { ...c, ...updates } : c)
+      })),
+      deleteClip: (id) => set((state) => ({
+        clips: state.clips.filter((c) => c.id !== id)
+      })),
+
+      // Frames
+      frames: {},
+      setFrame: (frame) => set((state) => ({
+        frames: { ...state.frames, [frame.id]: frame }
+      })),
+      deleteFrame: (id) => set((state) => {
+        const { [id]: _, ...rest } = state.frames
+        return { frames: rest }
+      }),
+
+      // Videos
+      videos: {},
+      setVideo: (video) => set((state) => ({
+        videos: { ...state.videos, [video.id]: video }
+      })),
+      updateVideoStatus: (id, status, error) => set((state) => ({
+        videos: {
+          ...state.videos,
+          [id]: { ...state.videos[id], status, error }
+        }
+      })),
+
+      // Timeline
+      timeline: initialTimelineState,
+      setTimeline: (updates) => set((state) => ({
+        timeline: { ...state.timeline, ...updates }
+      })),
+      setPlayheadTime: (time) => set((state) => ({
+        timeline: { ...state.timeline, playheadTime: time }
+      })),
+      setIsPlaying: (isPlaying) => set((state) => ({
+        timeline: { ...state.timeline, isPlaying }
+      })),
+      selectClip: (id, multi = false) => set((state) => ({
+        timeline: {
+          ...state.timeline,
+          selectedClipIds: multi
+            ? state.timeline.selectedClipIds.includes(id)
+              ? state.timeline.selectedClipIds.filter((i) => i !== id)
+              : [...state.timeline.selectedClipIds, id]
+            : [id]
+        }
+      })),
+      clearSelection: () => set((state) => ({
+        timeline: { ...state.timeline, selectedClipIds: [], selectedSceneId: null }
+      })),
+
+      // Global style
+      globalStyle: '',
+      setGlobalStyle: (globalStyle) => set({ globalStyle }),
+
+      // Reset
+      reset: () => set({
+        project: null,
+        audioFile: null,
+        transcript: [],
+        scenes: [],
+        clips: [],
+        frames: {},
+        videos: {},
+        timeline: initialTimelineState,
+        globalStyle: '',
+      }),
+    }),
+    {
+      name: 'radiostar-project',
+      partialize: (state) => ({
+        // Only persist these fields
+        project: state.project,
+        transcript: state.transcript,
+        scenes: state.scenes,
+        clips: state.clips,
+        globalStyle: state.globalStyle,
+        // Don't persist: audioFile (has File object), frames/videos (large blobs), timeline (UI state)
+      }),
+    }
+  )
+)

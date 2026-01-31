@@ -26,11 +26,11 @@ Audio File → Transcription → Scene Planning → Frame Generation → Timelin
 **Goal:** Upgrade to Next.js, establish clean architecture
 
 ### Tasks
-- [ ] Initialize Next.js 15 in radiostar
-- [ ] Set up Tailwind CSS 4
-- [ ] Configure environment variables
-- [ ] Set up project structure
-- [ ] Port useful types from radio-star
+- [x] Initialize Next.js 15 in radiostar
+- [x] Set up Tailwind CSS 3.4
+- [x] Configure environment variables
+- [x] Set up project structure
+- [x] Port useful types from radio-star
 
 ### Project Structure
 ```
@@ -67,7 +67,21 @@ radiostar/
 ```
 
 ### Implementation Log
-<!-- Document what was done here -->
+
+**2026-01-31: Phase 0 Complete**
+- Removed Vite config, migrated to Next.js 15 with Turbopack
+- Created project structure: `src/app`, `src/components`, `src/lib`, `src/store`, `src/types`
+- Set up Tailwind CSS 3.4 with brand colors (red theme)
+- Created comprehensive types in `src/types/index.ts`:
+  - Audio & Transcription types
+  - Scene & Clip types (with 5 Ws)
+  - Frame & Video types
+  - Timeline state types
+- Created Zustand store in `src/store/project-store.ts` with persistence
+- Created Gemini client in `src/lib/gemini.ts` with transcribe, planScenes, generateFrame, generateVideo functions
+- Built landing page with hero ("Video killed the radio star. Make more.") and drag-drop upload
+- Built studio page shell with 3-panel layout (left: properties, center: preview+timeline, right: actions)
+- Dev server running successfully on localhost:3001
 
 ---
 
@@ -447,8 +461,8 @@ interface ProjectStore {
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Foundation | ⬜ Not Started | |
-| Phase 1: Audio | ⬜ Not Started | |
+| Phase 0: Foundation | ✅ Complete | Next.js 15, Tailwind, Zustand, types |
+| Phase 1: Audio | 🔄 Up Next | Landing page upload ready |
 | Phase 2: Scene Planning | ⬜ Not Started | |
 | Phase 3: Frame Generation | ⬜ Not Started | |
 | Phase 4: Video Clips | ⬜ Not Started | |

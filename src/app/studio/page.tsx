@@ -229,6 +229,25 @@ function StudioPageContent() {
 
       if (data.segments) {
         setTranscript(data.segments as TranscriptSegment[])
+
+        // Auto-suggest visual style based on transcript
+        if (!globalStyle) {
+          try {
+            const styleResponse = await fetch('/api/suggest-style', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ transcript: data.segments }),
+            })
+            const styleData = await styleResponse.json()
+            if (styleData.style) {
+              setGlobalStyle(styleData.style)
+              showToast('Visual style suggested based on lyrics', 'info')
+            }
+          } catch (styleError) {
+            console.error('Style suggestion error:', styleError)
+            // Non-blocking - just log the error
+          }
+        }
       }
     } catch (error) {
       console.error('Transcription error:', error)
@@ -465,6 +484,54 @@ function StudioPageContent() {
   const selectedClip = clips.find(c => c.id === selectedClipId)
   const selectedScene = selectedClip ? scenes.find(s => s.id === selectedClip.sceneId) : null
   const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
+
+  // Auto-fill frame prompt when clip is selected
+  useEffect(() => {
+    if (!selectedClip || !selectedScene) {
+      return
+    }
+
+    // Find the transcript segment for this clip
+    const segment = transcript.find(s => s.id === selectedClip.segmentId)
+    const clipText = segment?.text || selectedClip.title
+
+    // Build prompt from scene context
+    const parts: string[] = []
+
+    // Add scene setting
+    if (selectedScene.where) {
+      parts.push(`Setting: ${selectedScene.where}`)
+    }
+    if (selectedScene.when) {
+      parts.push(`Time: ${selectedScene.when}`)
+    }
+
+    // Add characters/subjects
+    if (selectedScene.who && selectedScene.who.length > 0) {
+      parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
+    }
+
+    // Add action/mood
+    if (selectedScene.what) {
+      parts.push(`Action: ${selectedScene.what}`)
+    }
+    if (selectedScene.why) {
+      parts.push(`Mood: ${selectedScene.why}`)
+    }
+
+    // Add the clip's specific content
+    if (clipText) {
+      parts.push(`Moment: "${clipText}"`)
+    }
+
+    // Add global style hint
+    if (globalStyle) {
+      parts.push(`Style: ${globalStyle}`)
+    }
+
+    const autoPrompt = parts.join('. ')
+    setFramePrompt(autoPrompt)
+  }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle])
 
   if (!audioFile) {
     return (

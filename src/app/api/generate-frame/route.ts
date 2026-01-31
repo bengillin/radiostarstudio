@@ -74,7 +74,8 @@ Scene: ${scene.title}
       console.log('[generate-frame] Imagen raw response length:', responseText.length)
       console.log('[generate-frame] Imagen raw response (first 1000):', responseText.substring(0, 1000))
 
-      let data: Record<string, unknown> = {}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: any = {}
       try {
         data = JSON.parse(responseText)
         console.log('[generate-frame] Imagen parsed keys:', Object.keys(data))

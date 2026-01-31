@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, globalStyle } = body
+    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, globalStyle, model } = body
 
     if (!clipId || !startFrameUrl) {
       return NextResponse.json(
@@ -25,7 +25,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('[generate-video] Generating video for clip:', clipId)
+    const videoModel = model || 'veo-3.1-generate-preview'
+    console.log('[generate-video] Generating video for clip:', clipId, 'model:', videoModel)
     console.log('[generate-video] Motion prompt:', motionPrompt?.substring(0, 100))
 
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
@@ -58,11 +59,11 @@ Visual style: ${globalStyle || 'cinematic, high quality'}
 
 Create smooth, cinematic camera movement. Maintain visual consistency with the input frame.`
 
-    console.log('[generate-video] Calling Veo API...')
+    console.log('[generate-video] Calling Veo API with model:', videoModel)
 
     // Generate video using Veo
     let operation = await ai.models.generateVideos({
-      model: 'veo-2.0-generate-001',
+      model: videoModel,
       prompt: fullPrompt,
       image: {
         imageBytes,
@@ -70,10 +71,10 @@ Create smooth, cinematic camera movement. Maintain visual consistency with the i
       },
       config: {
         numberOfVideos: 1,
-        durationSeconds: 5,
-        fps: 24,
+        durationSeconds: 8,
         aspectRatio: '16:9',
         personGeneration: 'allow_adult',
+        resolution: '720p',
       },
     })
 
@@ -139,11 +140,11 @@ Create smooth, cinematic camera movement. Maintain visual consistency with the i
         id: `video-${clipId}-${Date.now()}`,
         clipId,
         url: videoDataUrl,
-        duration: 5,
+        duration: 8,
         status: 'complete',
         startFrameId: `frame-${clipId}-start`,
         motionPrompt: fullPrompt,
-        model: 'veo-2.0-generate-001',
+        model: videoModel,
         generatedAt: new Date().toISOString(),
       },
     })

@@ -65,6 +65,14 @@ interface ProjectStore {
   globalStyle: string
   setGlobalStyle: (style: string) => void
 
+  // Model settings
+  modelSettings: {
+    text: string
+    image: string
+    video: string
+  }
+  setModelSettings: (settings: Partial<{ text: string; image: string; video: string }>) => void
+
   // History (Undo/Redo)
   history: HistoryEntry[]
   historyIndex: number
@@ -180,6 +188,16 @@ export const useProjectStore = create<ProjectStore>()(
       globalStyle: '',
       setGlobalStyle: (globalStyle) => set({ globalStyle }),
 
+      // Model settings
+      modelSettings: {
+        text: 'gemini-3-pro-preview',
+        image: 'imagen-4.0-generate-001',
+        video: 'veo-3.1-generate-preview',
+      },
+      setModelSettings: (settings) => set((state) => ({
+        modelSettings: { ...state.modelSettings, ...settings },
+      })),
+
       // History (Undo/Redo)
       history: [],
       historyIndex: -1,
@@ -231,6 +249,7 @@ export const useProjectStore = create<ProjectStore>()(
         videos: {},
         timeline: initialTimelineState,
         globalStyle: '',
+        // Keep model settings on reset
         history: [],
         historyIndex: -1,
       }),
@@ -244,6 +263,7 @@ export const useProjectStore = create<ProjectStore>()(
         scenes: state.scenes,
         clips: state.clips,
         globalStyle: state.globalStyle,
+        modelSettings: state.modelSettings,
         // Persist timeline zoom only
         timeline: { zoom: state.timeline.zoom },
         // Don't persist: audioFile (has File object), frames/videos (large blobs), rest of timeline (UI state)

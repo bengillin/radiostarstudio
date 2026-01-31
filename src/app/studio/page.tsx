@@ -12,6 +12,7 @@ import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { formatTime } from '@/lib/utils'
+import { AVAILABLE_MODELS } from '@/lib/gemini'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
@@ -53,6 +54,8 @@ function StudioPageContent() {
     setVideo,
     globalStyle,
     setGlobalStyle,
+    modelSettings,
+    setModelSettings,
     saveToHistory,
     undo,
     redo,
@@ -226,6 +229,25 @@ function StudioPageContent() {
 
       if (data.segments) {
         setTranscript(data.segments as TranscriptSegment[])
+
+        // Auto-suggest visual style based on transcript
+        if (!globalStyle) {
+          try {
+            const styleResponse = await fetch('/api/suggest-style', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ transcript: data.segments }),
+            })
+            const styleData = await styleResponse.json()
+            if (styleData.style) {
+              setGlobalStyle(styleData.style)
+              showToast('Visual style suggested based on lyrics', 'info')
+            }
+          } catch (styleError) {
+            console.error('Style suggestion error:', styleError)
+            // Non-blocking - just log the error
+          }
+        }
       }
     } catch (error) {
       console.error('Transcription error:', error)
@@ -321,6 +343,7 @@ function StudioPageContent() {
           type,
           scene,
           globalStyle,
+          model: modelSettings.image,
         }),
       })
 
@@ -370,6 +393,7 @@ function StudioPageContent() {
           motionPrompt,
           scene,
           globalStyle,
+          model: modelSettings.video,
         }),
       })
 
@@ -460,6 +484,54 @@ function StudioPageContent() {
   const selectedClip = clips.find(c => c.id === selectedClipId)
   const selectedScene = selectedClip ? scenes.find(s => s.id === selectedClip.sceneId) : null
   const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
+
+  // Auto-fill frame prompt when clip is selected
+  useEffect(() => {
+    if (!selectedClip || !selectedScene) {
+      return
+    }
+
+    // Find the transcript segment for this clip
+    const segment = transcript.find(s => s.id === selectedClip.segmentId)
+    const clipText = segment?.text || selectedClip.title
+
+    // Build prompt from scene context
+    const parts: string[] = []
+
+    // Add scene setting
+    if (selectedScene.where) {
+      parts.push(`Setting: ${selectedScene.where}`)
+    }
+    if (selectedScene.when) {
+      parts.push(`Time: ${selectedScene.when}`)
+    }
+
+    // Add characters/subjects
+    if (selectedScene.who && selectedScene.who.length > 0) {
+      parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
+    }
+
+    // Add action/mood
+    if (selectedScene.what) {
+      parts.push(`Action: ${selectedScene.what}`)
+    }
+    if (selectedScene.why) {
+      parts.push(`Mood: ${selectedScene.why}`)
+    }
+
+    // Add the clip's specific content
+    if (clipText) {
+      parts.push(`Moment: "${clipText}"`)
+    }
+
+    // Add global style hint
+    if (globalStyle) {
+      parts.push(`Style: ${globalStyle}`)
+    }
+
+    const autoPrompt = parts.join('. ')
+    setFramePrompt(autoPrompt)
+  }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle])
 
   if (!audioFile) {
     return (
@@ -1208,6 +1280,39 @@ function StudioPageContent() {
                 </p>
               </div>
             )}
+
+            {/* Model Settings */}
+            <div>
+              <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                AI Models
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Image Generation</label>
+                  <select
+                    value={modelSettings.image}
+                    onChange={(e) => setModelSettings({ image: e.target.value })}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                  >
+                    {AVAILABLE_MODELS.image.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-white/40 block mb-1">Video Generation</label>
+                  <select
+                    value={modelSettings.video}
+                    onChange={(e) => setModelSettings({ video: e.target.value })}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
+                  >
+                    {AVAILABLE_MODELS.video.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name} - {m.description}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
         </aside>
       </main>

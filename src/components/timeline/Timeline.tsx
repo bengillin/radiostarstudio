@@ -96,7 +96,7 @@ export function Timeline({
   }, [])
 
   const handleTrimStart = useCallback((clipId: string, edge: 'start' | 'end', e: React.MouseEvent) => {
-    const clip = clips.find(c => c.id === clipId)
+    const clip = clips.find((c: Clip) => c.id === clipId)
     if (!clip) return
     e.stopPropagation()
     saveToHistory()
@@ -114,7 +114,7 @@ export function Timeline({
     const deltaTime = deltaX / zoom
     const newTime = Math.max(0, trimState.initialTime + deltaTime)
 
-    const clip = clips.find(c => c.id === trimState.clipId)
+    const clip = clips.find((c: Clip) => c.id === trimState.clipId)
     if (!clip) return
 
     if (trimState.edge === 'start') {
@@ -153,9 +153,9 @@ export function Timeline({
   }
 
   // Group clips by scene
-  const sceneClips = scenes.map(scene => ({
+  const sceneClips = scenes.map((scene: Scene) => ({
     scene,
-    clips: clips.filter(c => c.sceneId === scene.id).sort((a, b) => a.startTime - b.startTime),
+    clips: clips.filter((c: Clip) => c.sceneId === scene.id).sort((a: Clip, b: Clip) => a.startTime - b.startTime),
   }))
 
   return (
@@ -210,7 +210,7 @@ export function Timeline({
               <span className="text-[10px] text-white/40 uppercase">Scenes</span>
             </div>
             <div className="ml-16 h-full relative">
-              {scenes.map((scene) => (
+              {scenes.map((scene: Scene) => (
                 <div
                   key={scene.id}
                   className="absolute top-1 bottom-1 rounded bg-brand-500/30 border border-brand-500/50 flex items-center px-2 overflow-hidden"
@@ -231,7 +231,7 @@ export function Timeline({
               <span className="text-[10px] text-white/40 uppercase">Clips</span>
             </div>
             <div className="ml-16 h-full relative">
-              {clips.map((clip) => {
+              {clips.map((clip: Clip) => {
                 const hasVideo = clip.video || videos[`video-${clip.id}`]
                 const isSelected = selectedClipId === clip.id
                 const isHoveredStart = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'start'
@@ -290,7 +290,7 @@ export function Timeline({
               <span className="text-[10px] text-white/40 uppercase">Videos</span>
             </div>
             <div className="ml-16 h-full relative">
-              {clips.map((clip) => {
+              {clips.map((clip: Clip) => {
                 const video = clip.video || videos[`video-${clip.id}`]
                 if (!video) return null
                 return (

@@ -47,11 +47,13 @@ interface ProjectStore {
   frames: Record<string, Frame>
   setFrame: (frame: Frame) => void
   deleteFrame: (id: string) => void
+  getFramesForClip: (clipId: string, type?: 'start' | 'end') => Frame[]
 
   // Videos
   videos: Record<string, GeneratedVideo>
   setVideo: (video: GeneratedVideo) => void
   updateVideoStatus: (id: string, status: GeneratedVideo['status'], error?: string) => void
+  getVideosForClip: (clipId: string) => GeneratedVideo[]
 
   // Timeline
   timeline: TimelineState
@@ -96,7 +98,7 @@ const initialTimelineState: TimelineState = {
 
 export const useProjectStore = create<ProjectStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Project
       project: null,
       setProject: (project) => set({ project }),
@@ -146,6 +148,16 @@ export const useProjectStore = create<ProjectStore>()(
         const { [id]: _, ...rest } = state.frames
         return { frames: rest }
       }),
+      getFramesForClip: (clipId, type) => {
+        const { frames } = get()
+        return Object.values(frames)
+          .filter((f: Frame) => f.clipId === clipId && (!type || f.type === type))
+          .sort((a: Frame, b: Frame) => {
+            const dateA = a.generatedAt ? new Date(a.generatedAt).getTime() : 0
+            const dateB = b.generatedAt ? new Date(b.generatedAt).getTime() : 0
+            return dateB - dateA // newest first
+          })
+      },
 
       // Videos
       videos: {},
@@ -158,6 +170,16 @@ export const useProjectStore = create<ProjectStore>()(
           [id]: { ...state.videos[id], status, error }
         }
       })),
+      getVideosForClip: (clipId) => {
+        const { videos } = get()
+        return Object.values(videos)
+          .filter((v: GeneratedVideo) => v.clipId === clipId)
+          .sort((a: GeneratedVideo, b: GeneratedVideo) => {
+            const dateA = a.generatedAt ? new Date(a.generatedAt).getTime() : 0
+            const dateB = b.generatedAt ? new Date(b.generatedAt).getTime() : 0
+            return dateB - dateA // newest first
+          })
+      },
 
       // Timeline
       timeline: initialTimelineState,

@@ -713,6 +713,69 @@ export default function StudioPage() {
                         <p className="text-xs text-red-400 mt-2">{frameError}</p>
                       )}
 
+                      {/* Upload frames */}
+                      <div className="mt-4">
+                        <p className="text-xs text-white/40 uppercase mb-2">Or Upload</p>
+                        <div className="flex gap-2">
+                          <label className="flex-1 py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/10 border-dashed rounded-lg text-xs text-center cursor-pointer transition-colors">
+                            <Upload className="w-4 h-4 mx-auto mb-1 text-white/40" />
+                            Start
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file && selectedClipId) {
+                                  const reader = new FileReader()
+                                  reader.onload = () => {
+                                    const frame: Frame = {
+                                      id: `frame-${selectedClipId}-start-${Date.now()}`,
+                                      clipId: selectedClipId,
+                                      type: 'start',
+                                      source: 'upload',
+                                      url: reader.result as string,
+                                    }
+                                    setFrame(frame)
+                                    updateClip(selectedClipId, { startFrame: frame })
+                                  }
+                                  reader.readAsDataURL(file)
+                                }
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                          <label className="flex-1 py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/10 border-dashed rounded-lg text-xs text-center cursor-pointer transition-colors">
+                            <Upload className="w-4 h-4 mx-auto mb-1 text-white/40" />
+                            End
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file && selectedClipId) {
+                                  const reader = new FileReader()
+                                  reader.onload = () => {
+                                    const frame: Frame = {
+                                      id: `frame-${selectedClipId}-end-${Date.now()}`,
+                                      clipId: selectedClipId,
+                                      type: 'end',
+                                      source: 'upload',
+                                      url: reader.result as string,
+                                    }
+                                    setFrame(frame)
+                                    updateClip(selectedClipId, { endFrame: frame })
+                                  }
+                                  reader.readAsDataURL(file)
+                                }
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+
                       {/* Generated frames preview */}
                       {(selectedClip.startFrame || selectedClip.endFrame) && (
                         <div className="mt-4 grid grid-cols-2 gap-2">

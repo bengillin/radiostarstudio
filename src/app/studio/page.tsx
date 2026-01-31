@@ -5,12 +5,12 @@ import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X
+  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { formatTime } from '@/lib/utils'
-import type { TranscriptSegment, Scene, Clip, Frame } from '@/types'
+import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
 
@@ -37,6 +37,8 @@ export default function StudioPage() {
     updateClip,
     frames,
     setFrame,
+    videos,
+    setVideo,
     globalStyle,
     setGlobalStyle,
   } = useProjectStore()
@@ -53,6 +55,9 @@ export default function StudioPage() {
   const [isGeneratingFrame, setIsGeneratingFrame] = useState(false)
   const [frameError, setFrameError] = useState<string | null>(null)
   const [generatingFrameType, setGeneratingFrameType] = useState<'start' | 'end'>('start')
+  const [motionPrompt, setMotionPrompt] = useState('')
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
+  const [videoError, setVideoError] = useState<string | null>(null)
 
   // Determine current step based on state
   const currentStep: Step = !audioFile
@@ -254,9 +259,56 @@ export default function StudioPage() {
     }
   }
 
+  const handleGenerateVideo = async () => {
+    if (!selectedClipId) return
+
+    const clip = clips.find(c => c.id === selectedClipId)
+    if (!clip?.startFrame) return
+
+    const scene = scenes.find(s => s.id === clip.sceneId)
+    const startFrameUrl = typeof clip.startFrame === 'object' ? clip.startFrame.url : ''
+
+    if (!startFrameUrl) return
+
+    setIsGeneratingVideo(true)
+    setVideoError(null)
+
+    try {
+      const response = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clipId: selectedClipId,
+          startFrameUrl,
+          endFrameUrl: clip.endFrame && typeof clip.endFrame === 'object' ? clip.endFrame.url : undefined,
+          motionPrompt,
+          scene,
+          globalStyle,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Video generation failed')
+      }
+
+      if (data.video) {
+        setVideo(data.video as GeneratedVideo)
+        updateClip(selectedClipId, { video: data.video })
+      }
+    } catch (error) {
+      console.error('Video generation error:', error)
+      setVideoError(error instanceof Error ? error.message : 'Failed to generate video')
+    } finally {
+      setIsGeneratingVideo(false)
+    }
+  }
+
   // Get selected clip and its scene
   const selectedClip = clips.find(c => c.id === selectedClipId)
   const selectedScene = selectedClip ? scenes.find(s => s.id === selectedClip.sceneId) : null
+  const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
 
   if (!audioFile) {
     return (
@@ -798,6 +850,60 @@ export default function StudioPage() {
                                 <img
                                   src={typeof selectedClip.endFrame === 'object' ? selectedClip.endFrame.url : ''}
                                   alt="End frame"
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Video Generation */}
+                      {selectedClip.startFrame && (
+                        <div className="mt-6 pt-4 border-t border-white/10">
+                          <h4 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">
+                            Generate Video
+                          </h4>
+                          <textarea
+                            value={motionPrompt}
+                            onChange={(e) => setMotionPrompt(e.target.value)}
+                            placeholder="Describe the motion... (e.g., 'Camera slowly zooms in, character turns head')"
+                            className="w-full h-16 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
+                          />
+                          <button
+                            onClick={handleGenerateVideo}
+                            disabled={isGeneratingVideo}
+                            className="w-full mt-2 py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            {isGeneratingVideo ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Generating Video...
+                              </>
+                            ) : (
+                              <>
+                                <Video className="w-4 h-4" />
+                                Generate Video Clip
+                              </>
+                            )}
+                          </button>
+                          {isGeneratingVideo && (
+                            <p className="text-xs text-white/40 mt-2 text-center">
+                              This may take a few minutes...
+                            </p>
+                          )}
+                          {videoError && (
+                            <p className="text-xs text-red-400 mt-2">{videoError}</p>
+                          )}
+
+                          {/* Video preview */}
+                          {selectedClipVideo && (
+                            <div className="mt-4">
+                              <p className="text-xs text-white/40 mb-2">Generated Video</p>
+                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
+                                <video
+                                  src={typeof selectedClipVideo === 'object' ? selectedClipVideo.url : ''}
+                                  controls
                                   className="w-full h-full object-cover"
                                 />
                               </div>

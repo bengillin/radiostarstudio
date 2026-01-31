@@ -75,7 +75,7 @@ function StudioPageContent() {
   const [planningError, setPlanningError] = useState<string | null>(null)
   const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null)
   // Use store's multi-select, but keep a single "active" clip for detail panel
-  const selectedClipIds = timeline.selectedClipIds
+  const selectedClipIds = timeline?.selectedClipIds ?? []
   const selectedClipId = selectedClipIds.length > 0 ? selectedClipIds[selectedClipIds.length - 1] : null
   const [framePrompt, setFramePrompt] = useState('')
   const [isGeneratingFrame, setIsGeneratingFrame] = useState(false)

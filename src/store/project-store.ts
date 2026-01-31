@@ -213,7 +213,7 @@ export const useProjectStore = create<ProjectStore>()(
       // Model settings
       modelSettings: {
         text: 'gemini-3-pro-preview',
-        image: 'imagen-4.0-generate-001',
+        image: 'gemini-3-pro-image-preview',
         video: 'veo-3.1-generate-preview',
       },
       setModelSettings: (settings) => set((state) => ({
@@ -283,11 +283,21 @@ export const useProjectStore = create<ProjectStore>()(
         project: state.project,
         transcript: state.transcript,
         scenes: state.scenes,
-        clips: state.clips,
+        // Strip large assets from clips before persisting
+        clips: state.clips.map((clip) => ({
+          id: clip.id,
+          sceneId: clip.sceneId,
+          segmentId: clip.segmentId,
+          title: clip.title,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          order: clip.order,
+          // Don't persist: startFrame, endFrame, video (large base64 blobs)
+        })),
         globalStyle: state.globalStyle,
         modelSettings: state.modelSettings,
         // Persist timeline zoom only
-        timeline: { zoom: state.timeline.zoom },
+        timeline: { zoom: state.timeline?.zoom ?? 50 },
         // Don't persist: audioFile (has File object), frames/videos (large blobs), rest of timeline (UI state)
       }),
     }

@@ -8,8 +8,8 @@ export const AVAILABLE_MODELS = {
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Legacy fast model' },
   ],
   image: [
-    { id: 'imagen-4.0-generate-001', name: 'Imagen 4.0', description: 'Best quality' },
-    { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', description: 'Multimodal' },
+    { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', description: 'Recommended' },
+    { id: 'imagen-4.0-generate-001', name: 'Imagen 4.0', description: 'May have issues' },
   ],
   video: [
     { id: 'veo-3.1-generate-preview', name: 'Veo 3.1', description: 'Highest quality' },
@@ -21,7 +21,7 @@ export const AVAILABLE_MODELS = {
 const MODELS = {
   flash: 'gemini-3-flash-preview',
   pro: 'gemini-3-pro-preview',
-  image: 'imagen-4.0-generate-001',
+  image: 'gemini-3-pro-image-preview',
   video: 'veo-3.1-generate-preview',
 } as const
 

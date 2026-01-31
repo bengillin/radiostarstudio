@@ -4,12 +4,13 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
-  Play, Pause, Loader2, ChevronRight
+  Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
+  Users, Clapperboard, Clock, MapPin, Heart
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
 import { formatTime } from '@/lib/utils'
-import type { TranscriptSegment } from '@/types'
+import type { TranscriptSegment, Scene } from '@/types'
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
 
@@ -24,12 +25,23 @@ const STEPS: { id: Step; label: string; icon: typeof Music }[] = [
 export default function StudioPage() {
   const router = useRouter()
   const audioRef = useRef<HTMLAudioElement>(null)
-  const { audioFile, transcript, setTranscript, scenes } = useProjectStore()
+  const {
+    audioFile,
+    transcript,
+    setTranscript,
+    scenes,
+    setScenes,
+    globalStyle,
+    setGlobalStyle,
+  } = useProjectStore()
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null)
+  const [isPlanning, setIsPlanning] = useState(false)
+  const [planningError, setPlanningError] = useState<string | null>(null)
+  const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null)
 
   // Determine current step based on state
   const currentStep: Step = !audioFile
@@ -118,6 +130,44 @@ export default function StudioPage() {
       setTranscriptionError('Failed to transcribe audio. Please try again.')
     } finally {
       setIsTranscribing(false)
+    }
+  }
+
+  const handlePlanScenes = async () => {
+    if (transcript.length === 0) return
+
+    setIsPlanning(true)
+    setPlanningError(null)
+
+    try {
+      const response = await fetch('/api/plan-scenes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript,
+          style: globalStyle,
+          duration: audioFile?.duration,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        console.error('Scene planning API error:', data)
+        throw new Error(data.details || data.error || 'Scene planning failed')
+      }
+
+      if (data.scenes) {
+        setScenes(data.scenes as Scene[])
+      }
+      if (data.globalStyle && !globalStyle) {
+        setGlobalStyle(data.globalStyle)
+      }
+    } catch (error) {
+      console.error('Scene planning error:', error)
+      setPlanningError('Failed to plan scenes. Please try again.')
+    } finally {
+      setIsPlanning(false)
     }
   }
 
@@ -226,15 +276,75 @@ export default function StudioPage() {
                   Scenes ({scenes.length})
                 </h3>
                 <div className="space-y-2">
-                  {scenes.map((scene) => (
-                    <div
-                      key={scene.id}
-                      className="p-3 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:border-white/20"
-                    >
-                      <p className="font-medium">{scene.title}</p>
-                      <p className="text-xs text-white/40 mt-1 line-clamp-2">{scene.description}</p>
-                    </div>
-                  ))}
+                  {scenes.map((scene) => {
+                    const isExpanded = expandedSceneId === scene.id
+                    return (
+                      <div
+                        key={scene.id}
+                        className="rounded-lg bg-white/5 border border-white/10 overflow-hidden"
+                      >
+                        <div
+                          className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
+                          onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="font-medium truncate">{scene.title}</p>
+                              <span className="text-xs text-white/40 flex-shrink-0">
+                                {formatTime(scene.startTime)} - {formatTime(scene.endTime)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
+                          </div>
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-white/40 flex-shrink-0" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-white/40 flex-shrink-0" />
+                          )}
+                        </div>
+
+                        {isExpanded && (
+                          <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-2">
+                            <div className="flex items-start gap-2">
+                              <Users className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-white/40 uppercase">Who</p>
+                                <p className="text-sm text-white/70">{scene.who?.join(', ') || 'Not specified'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-white/40 uppercase">What</p>
+                                <p className="text-sm text-white/70">{scene.what || 'Not specified'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Clock className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-white/40 uppercase">When</p>
+                                <p className="text-sm text-white/70">{scene.when || 'Not specified'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <MapPin className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-white/40 uppercase">Where</p>
+                                <p className="text-sm text-white/70">{scene.where || 'Not specified'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Heart className="w-3.5 h-3.5 text-brand-400 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-white/40 uppercase">Why</p>
+                                <p className="text-sm text-white/70">{scene.why || 'Not specified'}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -328,13 +438,29 @@ export default function StudioPage() {
                 <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
                   Scene Planning
                 </h3>
-                <button className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
-                  Plan Scenes with AI
-                  <ChevronRight className="w-4 h-4" />
+                <button
+                  onClick={handlePlanScenes}
+                  disabled={isPlanning}
+                  className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                >
+                  {isPlanning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Planning...
+                    </>
+                  ) : (
+                    <>
+                      Plan Scenes with AI
+                      <ChevronRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
                 <p className="text-xs text-white/40 mt-2">
                   Break down the song into visual scenes with the 5 Ws
                 </p>
+                {planningError && (
+                  <p className="text-xs text-red-400 mt-2">{planningError}</p>
+                )}
               </div>
             )}
 
@@ -361,9 +487,14 @@ export default function StudioPage() {
                   Visual Style
                 </h3>
                 <textarea
+                  value={globalStyle}
+                  onChange={(e) => setGlobalStyle(e.target.value)}
                   placeholder="Describe the visual style... (e.g., 'Neon-lit cyberpunk city at night')"
                   className="w-full h-24 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                 />
+                <p className="text-xs text-white/40 mt-1">
+                  Optional: AI will suggest a style if left blank
+                </p>
               </div>
             )}
           </div>

@@ -146,7 +146,6 @@ export async function generateFrame(
     model: MODELS.image,
     contents: { parts },
     config: {
-      // @ts-expect-error - imageConfig may not be in types yet
       imageConfig: {
         aspectRatio: '16:9',
       },
@@ -156,9 +155,7 @@ export async function generateFrame(
   const responseParts = response.candidates?.[0]?.content?.parts
   if (responseParts) {
     for (const part of responseParts) {
-      // @ts-expect-error - inlineData type
       if (part.inlineData) {
-        // @ts-expect-error - inlineData type
         return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
       }
     }
@@ -181,7 +178,6 @@ export async function generateVideo(
   const mimeType = match[1]
   const imageBytes = match[2]
 
-  // @ts-expect-error - generateVideos may not be in types
   let operation = await ai.models.generateVideos({
     model: MODELS.video,
     prompt,
@@ -199,12 +195,14 @@ export async function generateVideo(
   // Poll for completion
   while (!operation.done) {
     await new Promise((resolve) => setTimeout(resolve, 10000))
-    // @ts-expect-error - operations type
     operation = await ai.operations.getVideosOperation({ operation })
   }
 
   if (operation.error) {
-    throw new Error(operation.error.message || 'Video generation failed')
+    const errorMessage = typeof operation.error === 'object' && operation.error !== null && 'message' in operation.error
+      ? String(operation.error.message)
+      : 'Video generation failed'
+    throw new Error(errorMessage)
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri

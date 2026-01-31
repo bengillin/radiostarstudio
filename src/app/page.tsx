@@ -1,12 +1,39 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Upload, Music, Sparkles, ArrowRight } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Upload, Music, Sparkles, ArrowRight, Loader2 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 
 export default function Home() {
+  const router = useRouter()
   const [isDragging, setIsDragging] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const { setAudioFile } = useProjectStore()
+
+  const processAudioFile = useCallback(async (file: File) => {
+    setIsLoading(true)
+    const url = URL.createObjectURL(file)
+
+    // Get audio duration
+    const audio = new Audio(url)
+    await new Promise<void>((resolve) => {
+      audio.onloadedmetadata = () => resolve()
+      audio.onerror = () => resolve()
+    })
+
+    const duration = audio.duration || 0
+
+    setAudioFile({
+      id: crypto.randomUUID(),
+      name: file.name,
+      url,
+      duration,
+      file,
+    })
+
+    router.push('/studio')
+  }, [setAudioFile, router])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -14,33 +41,16 @@ export default function Home() {
 
     const file = e.dataTransfer.files[0]
     if (file && file.type.startsWith('audio/')) {
-      const url = URL.createObjectURL(file)
-      setAudioFile({
-        id: crypto.randomUUID(),
-        name: file.name,
-        url,
-        duration: 0, // Will be set after loading
-        file,
-      })
-      // Navigate to studio
-      window.location.href = '/studio'
+      processAudioFile(file)
     }
-  }, [setAudioFile])
+  }, [processAudioFile])
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file && file.type.startsWith('audio/')) {
-      const url = URL.createObjectURL(file)
-      setAudioFile({
-        id: crypto.randomUUID(),
-        name: file.name,
-        url,
-        duration: 0,
-        file,
-      })
-      window.location.href = '/studio'
+      processAudioFile(file)
     }
-  }, [setAudioFile])
+  }, [processAudioFile])
 
   return (
     <main className="min-h-screen flex flex-col">
@@ -93,20 +103,29 @@ export default function Home() {
           />
 
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-            <div className={`
-              w-16 h-16 rounded-full flex items-center justify-center transition-colors
-              ${isDragging ? 'bg-brand-500/20' : 'bg-white/10'}
-            `}>
-              <Upload className={`w-8 h-8 ${isDragging ? 'text-brand-500' : 'text-white/60'}`} />
-            </div>
-            <div className="text-center">
-              <p className="font-medium text-white/80">
-                Drop your audio file here
-              </p>
-              <p className="text-sm text-white/40 mt-1">
-                or click to browse
-              </p>
-            </div>
+            {isLoading ? (
+              <>
+                <Loader2 className="w-12 h-12 text-brand-500 animate-spin" />
+                <p className="font-medium text-white/80">Loading audio...</p>
+              </>
+            ) : (
+              <>
+                <div className={`
+                  w-16 h-16 rounded-full flex items-center justify-center transition-colors
+                  ${isDragging ? 'bg-brand-500/20' : 'bg-white/10'}
+                `}>
+                  <Upload className={`w-8 h-8 ${isDragging ? 'text-brand-500' : 'text-white/60'}`} />
+                </div>
+                <div className="text-center">
+                  <p className="font-medium text-white/80">
+                    Drop your audio file here
+                  </p>
+                  <p className="text-sm text-white/40 mt-1">
+                    or click to browse
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

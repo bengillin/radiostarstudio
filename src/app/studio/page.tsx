@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video, Keyboard
+  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video, Keyboard,
+  Plus, Trash2
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
@@ -13,6 +14,9 @@ import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
 import { StorageIndicator } from '@/components/ui/StorageIndicator'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { GenerationQueue } from '@/components/ui/GenerationQueue'
+import { ExportDialog } from '@/components/ui/ExportDialog'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
@@ -52,6 +56,14 @@ function StudioPageContent() {
     updateClip,
     deleteClip,
     addClip,
+    createScene,
+    deleteSceneWithClips,
+    getClipsForScene,
+    createClip,
+    generationQueue,
+    queueAllFrames,
+    queueAllVideos,
+    startQueue,
     frames,
     setFrame,
     videos,
@@ -85,20 +97,17 @@ function StudioPageContent() {
   const [motionPrompt, setMotionPrompt] = useState('')
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
-  const [isExporting, setIsExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState(0)
-  const [exportError, setExportError] = useState<string | null>(null)
-  const [exportJobId, setExportJobId] = useState<string | null>(null)
-  const [exportSettings, setExportSettings] = useState<{
-    resolution: '1080p' | '720p' | '4k'
-    format: 'mp4' | 'webm' | 'mov'
-    fps: number
-  }>({
-    resolution: '1080p',
-    format: 'mp4',
-    fps: 30,
-  })
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
+  const [showQueueModal, setShowQueueModal] = useState(false)
+  const [showExportDialog, setShowExportDialog] = useState(false)
+
+  // Scene/Clip management state
+  const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
+  const [showCreateClipForm, setShowCreateClipForm] = useState(false)
+  const [newClipSceneId, setNewClipSceneId] = useState<string>('')
+  const [newClipStart, setNewClipStart] = useState(0)
+  const [newClipEnd, setNewClipEnd] = useState(5)
+  const [newClipTitle, setNewClipTitle] = useState('')
 
   // Check if any clips have videos generated
   const clipsWithVideos = clips.filter((c: Clip) => c.video || videos[`video-${c.id}`])
@@ -250,12 +259,50 @@ function StudioPageContent() {
             setShowShortcutsModal(true)
           }
           break
+        case 'KeyN':
+          // N = new scene, Shift+N = new clip
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            if (e.shiftKey) {
+              // New clip in current scene at playhead
+              const sceneAtPlayhead = scenes.find((s: Scene) =>
+                currentTime >= s.startTime && currentTime < s.endTime
+              )
+              if (sceneAtPlayhead) {
+                saveToHistory()
+                createClip(sceneAtPlayhead.id, currentTime, Math.min(currentTime + 5, sceneAtPlayhead.endTime))
+                showToast('Clip created', 'success')
+              } else {
+                showToast('No scene at playhead position', 'error')
+              }
+            } else {
+              // New scene at playhead
+              saveToHistory()
+              createScene()
+              showToast('Scene created', 'success')
+            }
+          }
+          break
+        case 'KeyG':
+          // G = open generation queue
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            setShowQueueModal(true)
+          }
+          break
+        case 'KeyE':
+          // Cmd/Ctrl+E = open export dialog
+          if (e.metaKey || e.ctrlKey) {
+            e.preventDefault()
+            setShowExportDialog(true)
+          }
+          break
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [currentTime, selectedClipIds, isPlaying, togglePlayback, handleSeek, handleDeleteSelectedClip, handleSplitAtPlayhead, undo, redo])
+  }, [currentTime, selectedClipIds, isPlaying, scenes, togglePlayback, handleSeek, handleDeleteSelectedClip, handleSplitAtPlayhead, undo, redo, saveToHistory, createScene, createClip, showToast])
 
   const handleTranscribe = async () => {
     if (!audioFile?.file) return
@@ -467,71 +514,6 @@ function StudioPageContent() {
     }
   }
 
-  const handleExport = async () => {
-    if (clipsWithVideos.length === 0) return
-
-    setIsExporting(true)
-    setExportProgress(0)
-    setExportError(null)
-
-    try {
-      // Prepare clips data for export
-      const exportClips = clipsWithVideos.map((clip: Clip) => {
-        const video = clip.video || videos[`video-${clip.id}`]
-        return {
-          id: clip.id,
-          videoUrl: video && typeof video === 'object' ? video.url : '',
-          startTime: clip.startTime,
-          endTime: clip.endTime,
-        }
-      }).filter((c: { videoUrl: string }) => c.videoUrl)
-
-      const response = await fetch('/api/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clips: exportClips,
-          audioUrl: audioFile?.url,
-          settings: exportSettings,
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.details || data.error || 'Export failed')
-      }
-
-      setExportJobId(data.jobId)
-
-      // Poll for progress
-      const pollInterval = setInterval(async () => {
-        const statusResponse = await fetch(`/api/export?jobId=${data.jobId}`)
-        const status = await statusResponse.json()
-
-        setExportProgress(status.progress || 0)
-
-        if (status.status === 'complete') {
-          clearInterval(pollInterval)
-          setIsExporting(false)
-          // In production, would trigger download here
-          showToast('Export complete! Download starting...', 'success')
-        } else if (status.status === 'failed') {
-          clearInterval(pollInterval)
-          setIsExporting(false)
-          setExportError(status.error || 'Export failed')
-          showToast(status.error || 'Export failed', 'error')
-        }
-      }, 1000)
-    } catch (error) {
-      console.error('Export error:', error)
-      const errorMsg = error instanceof Error ? error.message : 'Failed to export'
-      setExportError(errorMsg)
-      showToast(errorMsg, 'error')
-      setIsExporting(false)
-    }
-  }
-
   // Get selected clip and its scene
   const selectedClip = clips.find((c: Clip) => c.id === selectedClipId)
   const selectedScene = selectedClip ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
@@ -635,6 +617,23 @@ function StudioPageContent() {
         </div>
 
         <div className="flex items-center gap-4 justify-end">
+          {/* Queue indicator */}
+          {generationQueue.items.length > 0 && (
+            <button
+              onClick={() => setShowQueueModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30 rounded-lg text-sm transition-colors"
+            >
+              {generationQueue.isProcessing && !generationQueue.isPaused ? (
+                <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
+              ) : (
+                <Layers className="w-4 h-4 text-brand-400" />
+              )}
+              <span className="text-brand-400">
+                {generationQueue.items.filter(i => i.status === 'complete').length}/
+                {generationQueue.items.length}
+              </span>
+            </button>
+          )}
           <StorageIndicator />
           <button
             onClick={() => setShowShortcutsModal(true)}
@@ -693,18 +692,31 @@ function StudioPageContent() {
             )}
 
             {/* Scenes */}
-            {scenes.length > 0 && (
+            {(scenes.length > 0 || audioFile) && (
               <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Scenes ({scenes.length})
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider">
+                    Scenes ({scenes.length})
+                  </h3>
+                  <button
+                    onClick={() => {
+                      saveToHistory()
+                      createScene()
+                      showToast('Scene created', 'success')
+                    }}
+                    className="p-1 hover:bg-white/10 rounded transition-colors"
+                    title="Add scene"
+                  >
+                    <Plus className="w-4 h-4 text-white/60" />
+                  </button>
+                </div>
                 <div className="space-y-2">
                   {scenes.map((scene: Scene) => {
                     const isExpanded = expandedSceneId === scene.id
                     return (
                       <div
                         key={scene.id}
-                        className="rounded-lg bg-white/5 border border-white/10 overflow-hidden"
+                        className="group rounded-lg bg-white/5 border border-white/10 overflow-hidden"
                       >
                         <div
                           className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
@@ -719,11 +731,24 @@ function StudioPageContent() {
                             </div>
                             <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
                           </div>
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-white/40 flex-shrink-0" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-white/40 flex-shrink-0" />
-                          )}
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
+                                setSceneToDelete({ id: scene.id, clipCount: sceneClips.length })
+                              }}
+                              className="p-1 hover:bg-red-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              title="Delete scene"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
+                            </button>
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4 text-white/40" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-white/40" />
+                            )}
+                          </div>
                         </div>
 
                         {isExpanded && (
@@ -798,10 +823,31 @@ function StudioPageContent() {
                             {/* Clips in this scene */}
                             {(() => {
                               const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
-                              if (sceneClips.length === 0) return null
                               return (
                                 <div className="mt-3 pt-3 border-t border-white/10">
-                                  <p className="text-xs text-white/40 uppercase mb-2">Clips ({sceneClips.length})</p>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs text-white/40 uppercase">Clips ({sceneClips.length})</p>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        saveToHistory()
+                                        const newStart = sceneClips.length > 0
+                                          ? sceneClips[sceneClips.length - 1].endTime
+                                          : scene.startTime
+                                        const newEnd = Math.min(newStart + 5, scene.endTime)
+                                        if (newEnd > newStart) {
+                                          createClip(scene.id, newStart, newEnd)
+                                          showToast('Clip created', 'success')
+                                        } else {
+                                          showToast('No room for new clip in scene', 'error')
+                                        }
+                                      }}
+                                      className="p-1 hover:bg-white/10 rounded transition-colors"
+                                      title="Add clip to scene"
+                                    >
+                                      <Plus className="w-3.5 h-3.5 text-white/60" />
+                                    </button>
+                                  </div>
                                   <div className="space-y-2">
                                     {sceneClips.map((clip: Clip) => {
                                       const isSelected = selectedClipIds.includes(clip.id)
@@ -854,6 +900,9 @@ function StudioPageContent() {
                                         </div>
                                       )
                                     })}
+                                    {sceneClips.length === 0 && (
+                                      <p className="text-xs text-white/30 italic py-2">No clips yet</p>
+                                    )}
                                   </div>
                                 </div>
                               )
@@ -1016,6 +1065,46 @@ function StudioPageContent() {
 
             {currentStep === 'generate' && (
               <div className="space-y-6">
+                {/* Batch Generation */}
+                <div>
+                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                    Batch Generation
+                  </h3>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => {
+                        queueAllFrames('both')
+                        setShowQueueModal(true)
+                        startQueue()
+                      }}
+                      disabled={clips.length === 0}
+                      className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Generate All Frames
+                    </button>
+                    <button
+                      onClick={() => {
+                        queueAllVideos()
+                        setShowQueueModal(true)
+                        startQueue()
+                      }}
+                      disabled={clips.length === 0}
+                      className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Film className="w-4 h-4" />
+                      Generate All Videos
+                    </button>
+                    <button
+                      onClick={() => setShowQueueModal(true)}
+                      className="w-full py-2 px-4 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-white/60 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Layers className="w-4 h-4" />
+                      View Queue ({generationQueue.items.length})
+                    </button>
+                  </div>
+                </div>
+
                 {/* Selected clip info */}
                 {selectedClip ? (
                   <div>
@@ -1261,84 +1350,39 @@ function StudioPageContent() {
                     </p>
                   </div>
 
-                  {/* Settings */}
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-white/40 uppercase block mb-1">Resolution</label>
-                      <select
-                        value={exportSettings.resolution}
-                        onChange={(e) => setExportSettings(s => ({ ...s, resolution: e.target.value as '1080p' | '720p' | '4k' }))}
-                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
-                      >
-                        <option value="720p">720p (HD)</option>
-                        <option value="1080p">1080p (Full HD)</option>
-                        <option value="4k">4K (Ultra HD)</option>
-                      </select>
+                  {/* Platform presets preview */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <p className="text-xs text-white/40">YouTube</p>
+                      <p className="text-sm text-white">1080p</p>
                     </div>
-                    <div>
-                      <label className="text-xs text-white/40 uppercase block mb-1">Format</label>
-                      <select
-                        value={exportSettings.format}
-                        onChange={(e) => setExportSettings(s => ({ ...s, format: e.target.value as 'mp4' | 'webm' | 'mov' }))}
-                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
-                      >
-                        <option value="mp4">MP4</option>
-                        <option value="webm">WebM</option>
-                        <option value="mov">MOV</option>
-                      </select>
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <p className="text-xs text-white/40">TikTok</p>
+                      <p className="text-sm text-white">9:16</p>
                     </div>
-                    <div>
-                      <label className="text-xs text-white/40 uppercase block mb-1">Frame Rate</label>
-                      <select
-                        value={exportSettings.fps}
-                        onChange={(e) => setExportSettings(s => ({ ...s, fps: Number(e.target.value) }))}
-                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
-                      >
-                        <option value="24">24 fps (Cinematic)</option>
-                        <option value="30">30 fps (Standard)</option>
-                        <option value="60">60 fps (Smooth)</option>
-                      </select>
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <p className="text-xs text-white/40">Instagram</p>
+                      <p className="text-sm text-white">Reels</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <p className="text-xs text-white/40">Twitter</p>
+                      <p className="text-sm text-white">720p</p>
                     </div>
                   </div>
 
-                  {/* Progress bar */}
-                  {isExporting && (
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-white/40 mb-1">
-                        <span>Exporting...</span>
-                        <span>{exportProgress}%</span>
-                      </div>
-                      <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-brand-500 transition-all duration-300"
-                          style={{ width: `${exportProgress}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
                   {/* Export button */}
                   <button
-                    onClick={handleExport}
-                    disabled={isExporting || clipsWithVideos.length === 0}
+                    onClick={() => setShowExportDialog(true)}
+                    disabled={clipsWithVideos.length === 0}
                     className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                   >
-                    {isExporting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Exporting...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4" />
-                        Export Video
-                      </>
-                    )}
+                    <Download className="w-4 h-4" />
+                    Export Video
                   </button>
 
-                  {exportError && (
-                    <p className="text-xs text-red-400">{exportError}</p>
-                  )}
+                  <p className="text-xs text-white/40 text-center">
+                    Choose platform, resolution, and audio options
+                  </p>
                 </div>
               </div>
             )}
@@ -1401,6 +1445,40 @@ function StudioPageContent() {
       <KeyboardShortcutsModal
         isOpen={showShortcutsModal}
         onClose={() => setShowShortcutsModal(false)}
+      />
+
+      {/* Generation queue modal */}
+      <GenerationQueue
+        isOpen={showQueueModal}
+        onClose={() => setShowQueueModal(false)}
+      />
+
+      {/* Export dialog */}
+      <ExportDialog
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+      />
+
+      {/* Scene delete confirmation */}
+      <ConfirmDialog
+        isOpen={sceneToDelete !== null}
+        onClose={() => setSceneToDelete(null)}
+        onConfirm={() => {
+          if (sceneToDelete) {
+            saveToHistory()
+            // If scene has clips, delete them too (could also reassign)
+            deleteSceneWithClips(sceneToDelete.id)
+            showToast('Scene deleted', 'success')
+          }
+        }}
+        title="Delete Scene"
+        message={
+          sceneToDelete?.clipCount
+            ? `This scene contains ${sceneToDelete.clipCount} clip${sceneToDelete.clipCount > 1 ? 's' : ''}. Deleting the scene will also delete all its clips and any generated frames/videos.`
+            : 'Are you sure you want to delete this scene?'
+        }
+        confirmLabel="Delete"
+        variant="danger"
       />
     </div>
   )

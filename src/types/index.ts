@@ -166,6 +166,63 @@ export interface DragState {
 }
 
 // ============================================
+// GENERATION QUEUE
+// ============================================
+
+export interface QueueItem {
+  id: string
+  type: 'frame' | 'video'
+  clipId: string
+  frameType?: 'start' | 'end'
+  status: 'pending' | 'processing' | 'complete' | 'failed'
+  progress: number
+  error?: string
+  retryCount: number
+  createdAt: Date
+  startedAt?: Date
+  completedAt?: Date
+}
+
+export interface GenerationQueue {
+  items: QueueItem[]
+  isProcessing: boolean
+  isPaused: boolean
+}
+
+// ============================================
+// EXPORT SETTINGS
+// ============================================
+
+export type ExportGranularity = 'clip' | 'scene' | 'timeline'
+export type ExportAudioOption = 'video-only' | 'with-audio'
+export type SceneExportMode = 'concatenated' | 'separate'
+
+export interface PlatformPreset {
+  id: string
+  name: string
+  width: number
+  height: number
+  aspectRatio: '16:9' | '9:16' | '1:1' | '4:5'
+  maxDuration?: number
+  fps: number
+  bitrate: string
+}
+
+export interface EnhancedExportSettings {
+  granularity: ExportGranularity
+  audioOption: ExportAudioOption
+  sceneMode: SceneExportMode
+  preset: string | 'custom'
+  customSettings?: {
+    resolution: '720p' | '1080p' | '4k'
+    fps: 24 | 30 | 60
+    format: 'mp4' | 'webm' | 'mov'
+  }
+  selectedClipIds?: string[]
+  selectedSceneIds?: string[]
+}
+
+// ============================================
 // API RESPONSES
 // ============================================
 

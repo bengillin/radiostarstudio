@@ -22,7 +22,7 @@ export function Timeline({
   selectedClipIds = [],
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { scenes, clips, videos, timeline, setTimeline, updateClip, addClip, saveToHistory } = useProjectStore()
+  const { scenes, clips, videos, timeline, setTimeline, updateClip, addClip, saveToHistory, handleClipMoved } = useProjectStore()
 
   const zoom = timeline.zoom
   const setZoom = (newZoom: number) => setTimeline({ zoom: newZoom })
@@ -193,8 +193,16 @@ export function Timeline({
   }, [dragState, zoom, duration, updateClip])
 
   const handleDragEnd = useCallback(() => {
+    if (dragState) {
+      // Get the clip's current position after drag
+      const clip = clips.find((c: Clip) => c.id === dragState.clipId)
+      if (clip) {
+        // Check if clip moved to a different scene and handle accordingly
+        handleClipMoved(clip.id, clip.startTime, clip.endTime)
+      }
+    }
     setDragState(null)
-  }, [])
+  }, [dragState, clips, handleClipMoved])
 
   useEffect(() => {
     if (dragState) {

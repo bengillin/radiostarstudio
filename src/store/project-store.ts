@@ -9,6 +9,8 @@ import type {
   GeneratedVideo,
   TimelineState,
   Project,
+  QueueItem,
+  GenerationQueue,
 } from '@/types'
 import * as assetCache from '@/lib/asset-cache'
 
@@ -38,11 +40,22 @@ interface ProjectStore {
   updateScene: (id: string, updates: Partial<Scene>) => void
   deleteScene: (id: string) => void
 
+  // Enhanced scene management
+  createScene: (afterSceneId?: string) => string  // Returns new scene ID
+  deleteSceneWithClips: (id: string, reassignToSceneId?: string) => void
+  reorderScenes: () => void  // Recalculates scene boundaries to be sequential
+  getSceneAtTime: (time: number) => Scene | null
+
   clips: Clip[]
   setClips: (clips: Clip[]) => void
   addClip: (clip: Clip) => void
   updateClip: (id: string, updates: Partial<Clip>) => void
   deleteClip: (id: string) => void
+
+  // Enhanced clip management
+  createClip: (sceneId: string, startTime: number, endTime: number, title?: string) => string  // Returns new clip ID
+  handleClipMoved: (clipId: string, newStartTime: number, newEndTime: number) => void
+  getClipsForScene: (sceneId: string) => Clip[]
 
   // Frames
   frames: Record<string, Frame>
@@ -88,6 +101,18 @@ interface ProjectStore {
   rehydrateAssets: () => Promise<void>
   getStorageStats: () => Promise<{ frameCount: number; videoCount: number; estimatedSize: string }>
   clearAssetCache: () => Promise<void>
+
+  // Generation queue
+  generationQueue: GenerationQueue
+  addToQueue: (items: Omit<QueueItem, 'id' | 'status' | 'progress' | 'retryCount' | 'createdAt'>[]) => void
+  removeFromQueue: (itemId: string) => void
+  clearQueue: () => void
+  updateQueueItem: (itemId: string, updates: Partial<QueueItem>) => void
+  startQueue: () => void
+  pauseQueue: () => void
+  resumeQueue: () => void
+  queueAllFrames: (type: 'start' | 'end' | 'both') => void
+  queueAllVideos: () => void
 
   // Reset
   reset: () => void
@@ -135,6 +160,125 @@ export const useProjectStore = create<ProjectStore>()(
         scenes: state.scenes.filter((s) => s.id !== id)
       })),
 
+      // Enhanced scene management
+      createScene: (afterSceneId) => {
+        const { scenes, audioFile } = get()
+        const audioDuration = audioFile?.duration ?? 180 // default 3 min
+        const newSceneId = `scene-${Date.now()}`
+
+        let newStartTime: number
+        let newEndTime: number
+        let insertIndex: number
+
+        if (afterSceneId) {
+          // Insert after specified scene
+          const afterScene = scenes.find(s => s.id === afterSceneId)
+          const afterIndex = scenes.findIndex(s => s.id === afterSceneId)
+          if (afterScene && afterIndex !== -1) {
+            newStartTime = afterScene.endTime
+            // Find next scene to determine end time
+            const nextScene = scenes[afterIndex + 1]
+            newEndTime = nextScene ? nextScene.startTime : Math.min(afterScene.endTime + 10, audioDuration)
+            insertIndex = afterIndex + 1
+          } else {
+            // Fallback to end
+            const lastScene = scenes[scenes.length - 1]
+            newStartTime = lastScene ? lastScene.endTime : 0
+            newEndTime = Math.min(newStartTime + 10, audioDuration)
+            insertIndex = scenes.length
+          }
+        } else {
+          // Add at end
+          const lastScene = scenes[scenes.length - 1]
+          newStartTime = lastScene ? lastScene.endTime : 0
+          newEndTime = Math.min(newStartTime + 10, audioDuration)
+          insertIndex = scenes.length
+        }
+
+        const newScene: Scene = {
+          id: newSceneId,
+          title: `Scene ${scenes.length + 1}`,
+          description: '',
+          startTime: newStartTime,
+          endTime: newEndTime,
+          clips: [],
+          order: insertIndex,
+          who: [],
+          what: '',
+          when: '',
+          where: '',
+          why: '',
+          aesthetic: {
+            style: '',
+            colorPalette: [],
+            lighting: '',
+            cameraMovement: '',
+          },
+        }
+
+        // Insert at correct position
+        const newScenes = [...scenes]
+        newScenes.splice(insertIndex, 0, newScene)
+
+        // Update order for all scenes
+        newScenes.forEach((s, i) => {
+          s.order = i
+        })
+
+        set({ scenes: newScenes })
+        return newSceneId
+      },
+
+      deleteSceneWithClips: (id, reassignToSceneId) => {
+        const { scenes, clips } = get()
+        const sceneToDelete = scenes.find(s => s.id === id)
+        if (!sceneToDelete) return
+
+        // Find clips belonging to this scene
+        const sceneClips = clips.filter(c => c.sceneId === id)
+
+        let updatedClips = clips
+        if (sceneClips.length > 0) {
+          if (reassignToSceneId) {
+            // Reassign clips to specified scene
+            updatedClips = clips.map(c =>
+              c.sceneId === id ? { ...c, sceneId: reassignToSceneId } : c
+            )
+          } else {
+            // Delete the clips (and their frames/videos remain orphaned in cache)
+            updatedClips = clips.filter(c => c.sceneId !== id)
+          }
+        }
+
+        // Remove scene and reorder
+        const newScenes = scenes.filter(s => s.id !== id)
+        newScenes.forEach((s, i) => {
+          s.order = i
+        })
+
+        set({ scenes: newScenes, clips: updatedClips })
+      },
+
+      reorderScenes: () => {
+        const { scenes } = get()
+        if (scenes.length === 0) return
+
+        // Sort by startTime
+        const sortedScenes = [...scenes].sort((a, b) => a.startTime - b.startTime)
+
+        // Update order based on sorted position
+        sortedScenes.forEach((s, i) => {
+          s.order = i
+        })
+
+        set({ scenes: sortedScenes })
+      },
+
+      getSceneAtTime: (time) => {
+        const { scenes } = get()
+        return scenes.find(s => time >= s.startTime && time < s.endTime) ?? null
+      },
+
       // Clips
       clips: [],
       setClips: (clips) => set({ clips }),
@@ -145,6 +289,96 @@ export const useProjectStore = create<ProjectStore>()(
       deleteClip: (id) => set((state) => ({
         clips: state.clips.filter((c) => c.id !== id)
       })),
+
+      // Enhanced clip management
+      createClip: (sceneId, startTime, endTime, title) => {
+        const { clips, scenes } = get()
+        const scene = scenes.find(s => s.id === sceneId)
+        const sceneClips = clips.filter(c => c.sceneId === sceneId)
+        const newClipId = `clip-${Date.now()}`
+
+        const newClip: Clip = {
+          id: newClipId,
+          sceneId,
+          segmentId: '', // No transcript segment for manually created clips
+          title: title || `Clip ${sceneClips.length + 1}`,
+          startTime,
+          endTime,
+          order: sceneClips.length,
+        }
+
+        set((state) => ({ clips: [...state.clips, newClip] }))
+        return newClipId
+      },
+
+      handleClipMoved: (clipId, newStartTime, newEndTime) => {
+        const { scenes, clips, audioFile } = get()
+        const clip = clips.find(c => c.id === clipId)
+        if (!clip) return
+
+        const clipMidpoint = (newStartTime + newEndTime) / 2
+
+        // Find scene that contains the clip's midpoint
+        let targetScene = scenes.find(s =>
+          clipMidpoint >= s.startTime && clipMidpoint < s.endTime
+        )
+
+        if (!targetScene) {
+          // No scene contains this position - create a new one
+          const audioDuration = audioFile?.duration ?? 180
+          const newSceneId = `scene-${Date.now()}`
+
+          // Find the best position for new scene
+          const newScene: Scene = {
+            id: newSceneId,
+            title: `Scene ${scenes.length + 1}`,
+            description: '',
+            startTime: newStartTime,
+            endTime: Math.min(newEndTime, audioDuration),
+            clips: [],
+            order: scenes.length,
+            who: [],
+            what: '',
+            when: '',
+            where: '',
+            why: '',
+            aesthetic: {
+              style: '',
+              colorPalette: [],
+              lighting: '',
+              cameraMovement: '',
+            },
+          }
+
+          // Add new scene and update clip
+          const newScenes = [...scenes, newScene].sort((a, b) => a.startTime - b.startTime)
+          newScenes.forEach((s, i) => { s.order = i })
+
+          const updatedClips = clips.map(c =>
+            c.id === clipId
+              ? { ...c, sceneId: newSceneId, startTime: newStartTime, endTime: newEndTime }
+              : c
+          )
+
+          set({ scenes: newScenes, clips: updatedClips })
+        } else {
+          // Update clip with new times and potentially new scene
+          const updatedClips = clips.map(c =>
+            c.id === clipId
+              ? { ...c, sceneId: targetScene!.id, startTime: newStartTime, endTime: newEndTime }
+              : c
+          )
+
+          set({ clips: updatedClips })
+        }
+      },
+
+      getClipsForScene: (sceneId) => {
+        const { clips } = get()
+        return clips
+          .filter(c => c.sceneId === sceneId)
+          .sort((a, b) => a.startTime - b.startTime)
+      },
 
       // Frames
       frames: {},
@@ -381,6 +615,137 @@ export const useProjectStore = create<ProjectStore>()(
         set({ frames: {}, videos: {} })
       },
 
+      // Generation queue
+      generationQueue: {
+        items: [],
+        isProcessing: false,
+        isPaused: false,
+      },
+
+      addToQueue: (items) => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          items: [
+            ...state.generationQueue.items,
+            ...items.map((item) => ({
+              ...item,
+              id: `queue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              status: 'pending' as const,
+              progress: 0,
+              retryCount: 0,
+              createdAt: new Date(),
+            })),
+          ],
+        },
+      })),
+
+      removeFromQueue: (itemId) => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          items: state.generationQueue.items.filter((i) => i.id !== itemId),
+        },
+      })),
+
+      clearQueue: () => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          items: [],
+          isProcessing: false,
+        },
+      })),
+
+      updateQueueItem: (itemId, updates) => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          items: state.generationQueue.items.map((item) =>
+            item.id === itemId ? { ...item, ...updates } : item
+          ),
+        },
+      })),
+
+      startQueue: () => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          isProcessing: true,
+          isPaused: false,
+        },
+      })),
+
+      pauseQueue: () => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          isPaused: true,
+        },
+      })),
+
+      resumeQueue: () => set((state) => ({
+        generationQueue: {
+          ...state.generationQueue,
+          isPaused: false,
+        },
+      })),
+
+      queueAllFrames: (type) => {
+        const { clips, frames, generationQueue } = get()
+        const newItems: Omit<QueueItem, 'id' | 'status' | 'progress' | 'retryCount' | 'createdAt'>[] = []
+
+        for (const clip of clips) {
+          const existingStartFrames = Object.values(frames).filter(
+            (f: Frame) => f.clipId === clip.id && f.type === 'start'
+          )
+          const existingEndFrames = Object.values(frames).filter(
+            (f: Frame) => f.clipId === clip.id && f.type === 'end'
+          )
+
+          // Check if already in queue
+          const inQueueStart = generationQueue.items.some(
+            (i) => i.clipId === clip.id && i.type === 'frame' && i.frameType === 'start' && i.status !== 'failed'
+          )
+          const inQueueEnd = generationQueue.items.some(
+            (i) => i.clipId === clip.id && i.type === 'frame' && i.frameType === 'end' && i.status !== 'failed'
+          )
+
+          if ((type === 'start' || type === 'both') && existingStartFrames.length === 0 && !inQueueStart) {
+            newItems.push({ type: 'frame', clipId: clip.id, frameType: 'start' })
+          }
+          if ((type === 'end' || type === 'both') && existingEndFrames.length === 0 && !inQueueEnd) {
+            newItems.push({ type: 'frame', clipId: clip.id, frameType: 'end' })
+          }
+        }
+
+        if (newItems.length > 0) {
+          get().addToQueue(newItems)
+        }
+      },
+
+      queueAllVideos: () => {
+        const { clips, frames, videos, generationQueue } = get()
+        const newItems: Omit<QueueItem, 'id' | 'status' | 'progress' | 'retryCount' | 'createdAt'>[] = []
+
+        for (const clip of clips) {
+          // Check if clip has start frame
+          const hasStartFrame = Object.values(frames).some(
+            (f: Frame) => f.clipId === clip.id && f.type === 'start'
+          )
+          // Check if clip already has video
+          const hasVideo = Object.values(videos).some(
+            (v: GeneratedVideo) => v.clipId === clip.id && v.status === 'complete'
+          )
+          // Check if already in queue
+          const inQueue = generationQueue.items.some(
+            (i) => i.clipId === clip.id && i.type === 'video' && i.status !== 'failed'
+          )
+
+          if (hasStartFrame && !hasVideo && !inQueue) {
+            newItems.push({ type: 'video', clipId: clip.id })
+          }
+        }
+
+        if (newItems.length > 0) {
+          get().addToQueue(newItems)
+        }
+      },
+
       // Reset
       reset: () => {
         // Clear IndexedDB in background
@@ -400,6 +765,7 @@ export const useProjectStore = create<ProjectStore>()(
           history: [],
           historyIndex: -1,
           assetsLoaded: true,
+          generationQueue: { items: [], isProcessing: false, isPaused: false },
         })
       },
     }),

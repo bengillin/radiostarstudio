@@ -15,6 +15,8 @@ const shortcuts = [
     { keys: ['→'], description: 'Seek forward 5 seconds' },
   ]},
   { category: 'Editing', items: [
+    { keys: ['N'], description: 'New scene' },
+    { keys: ['⇧', 'N'], description: 'New clip at playhead' },
     { keys: ['S'], description: 'Split clip at playhead' },
     { keys: ['Delete'], description: 'Delete selected clip(s)' },
     { keys: ['⌘', 'Z'], description: 'Undo' },
@@ -24,7 +26,9 @@ const shortcuts = [
     { keys: ['⌘', 'Click'], description: 'Toggle clip selection' },
     { keys: ['⇧', 'Click'], description: 'Add to selection' },
   ]},
-  { category: 'Navigation', items: [
+  { category: 'Tools', items: [
+    { keys: ['G'], description: 'Open generation queue' },
+    { keys: ['⌘', 'E'], description: 'Export video' },
     { keys: ['?'], description: 'Show keyboard shortcuts' },
   ]},
 ]

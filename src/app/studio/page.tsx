@@ -200,7 +200,7 @@ function StudioPageContent() {
       audio.removeEventListener('timeupdate', handleTimeUpdate)
       audio.removeEventListener('ended', handleEnded)
     }
-  }, [])
+  }, [audioFile])
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current
@@ -503,7 +503,7 @@ function StudioPageContent() {
         {/* Upper section: 3-column layout */}
         <div className="flex-1 flex min-h-0">
           {/* Left panel - Tabbed Properties */}
-          <aside className="w-80 border-r border-white/10 flex flex-col flex-shrink-0">
+          <aside className="w-80 border-r border-white/10 flex flex-col flex-shrink-0 min-h-0">
             {/* Tabs */}
             <div className="flex border-b border-white/10 flex-shrink-0">
               <button
@@ -793,7 +793,7 @@ function StudioPageContent() {
           </aside>
 
           {/* Center - Preview */}
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {/* Preview area or Detail Panel */}
             <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
               {selectedClip && selectedScene ? (
@@ -855,7 +855,7 @@ function StudioPageContent() {
           </div>
 
         {/* Right panel - Actions */}
-        <aside className="w-80 border-l border-white/10 p-4 overflow-y-auto flex-shrink-0">
+        <aside className="w-80 border-l border-white/10 p-4 overflow-y-auto flex-shrink-0 min-h-0">
           <div className="space-y-6">
             {/* Workflow status info - shown during early stages */}
             {(currentStep === 'transcribe' || currentStep === 'plan') && (

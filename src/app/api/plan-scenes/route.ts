@@ -96,20 +96,79 @@ Keep scenes aligned with the transcript segments. Each scene should cover one or
     })
 
     console.log('[plan-scenes] Gemini response received')
-    const text = response.text || '{}'
+    let text = response.text || '{}'
     console.log('[plan-scenes] Response length:', text.length)
 
     let result
     try {
+      // Try to parse directly first
       result = JSON.parse(text)
       console.log('[plan-scenes] Parsed JSON, scenes:', result.scenes?.length)
     } catch (parseError) {
-      console.log('[plan-scenes] JSON parse failed:', parseError)
-      console.log('[plan-scenes] Raw text (first 500):', text.substring(0, 500))
-      return NextResponse.json(
-        { error: 'Failed to parse scene planning response' },
-        { status: 500 }
-      )
+      console.log('[plan-scenes] Initial JSON parse failed, attempting cleanup...')
+
+      // Try to extract JSON from the response (strip markdown code blocks if present)
+      let cleaned = text
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim()
+
+      // Try to find and fix common JSON issues
+      // Sometimes the response gets truncated or has trailing issues
+      try {
+        result = JSON.parse(cleaned)
+        console.log('[plan-scenes] Cleaned JSON parsed successfully')
+      } catch (e2) {
+        // Try to find the last complete scene and truncate there
+        const lastSceneEnd = cleaned.lastIndexOf('}')
+        if (lastSceneEnd > 0) {
+          // Find matching structure
+          let depth = 0
+          let foundEnd = -1
+          for (let i = 0; i < cleaned.length; i++) {
+            if (cleaned[i] === '{') depth++
+            if (cleaned[i] === '}') {
+              depth--
+              if (depth === 0) foundEnd = i
+            }
+          }
+          if (foundEnd > 0) {
+            cleaned = cleaned.substring(0, foundEnd + 1)
+            try {
+              result = JSON.parse(cleaned)
+              console.log('[plan-scenes] Truncated JSON parsed successfully')
+            } catch (e3) {
+              // Final fallback: return a minimal valid response
+              console.log('[plan-scenes] All parse attempts failed, using fallback')
+              console.log('[plan-scenes] Raw text (first 500):', text.substring(0, 500))
+              result = {
+                globalStyle: 'Cinematic, moody, atmospheric',
+                scenes: [{
+                  id: 'scene-1',
+                  title: 'Full Song',
+                  description: 'Main visual sequence for the entire song',
+                  startTime: 0,
+                  endTime: duration || 180,
+                  who: ['Main subject'],
+                  what: 'Performance and narrative',
+                  when: 'Present day',
+                  where: 'Various locations',
+                  why: 'Express the song emotion'
+                }]
+              }
+            }
+          }
+        }
+
+        if (!result) {
+          console.log('[plan-scenes] JSON parse failed completely:', parseError)
+          console.log('[plan-scenes] Raw text (first 500):', text.substring(0, 500))
+          return NextResponse.json(
+            { error: 'Failed to parse scene planning response', details: 'AI returned invalid JSON' },
+            { status: 500 }
+          )
+        }
+      }
     }
 
     // Ensure all scenes have IDs

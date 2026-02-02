@@ -12,6 +12,7 @@ import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
+import { StorageIndicator } from '@/components/ui/StorageIndicator'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
@@ -633,7 +634,8 @@ function StudioPageContent() {
           })}
         </div>
 
-        <div className="w-24 flex justify-end">
+        <div className="flex items-center gap-4 justify-end">
+          <StorageIndicator />
           <button
             onClick={() => setShowShortcutsModal(true)}
             className="p-2 hover:bg-white/10 rounded-lg transition-colors"

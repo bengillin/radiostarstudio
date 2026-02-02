@@ -10,6 +10,7 @@ import type {
   TimelineState,
   Project,
 } from '@/types'
+import * as assetCache from '@/lib/asset-cache'
 
 interface HistoryEntry {
   scenes: Scene[]
@@ -82,6 +83,12 @@ interface ProjectStore {
   undo: () => void
   redo: () => void
 
+  // Asset cache
+  assetsLoaded: boolean
+  rehydrateAssets: () => Promise<void>
+  getStorageStats: () => Promise<{ frameCount: number; videoCount: number; estimatedSize: string }>
+  clearAssetCache: () => Promise<void>
+
   // Reset
   reset: () => void
 }
@@ -141,13 +148,34 @@ export const useProjectStore = create<ProjectStore>()(
 
       // Frames
       frames: {},
-      setFrame: (frame) => set((state) => ({
-        frames: { ...state.frames, [frame.id]: frame }
-      })),
-      deleteFrame: (id) => set((state) => {
-        const { [id]: _, ...rest } = state.frames
-        return { frames: rest }
-      }),
+      setFrame: (frame) => {
+        // Save to IndexedDB in background
+        assetCache.saveFrame({
+          id: frame.id,
+          clipId: frame.clipId,
+          type: frame.type,
+          source: frame.source,
+          url: frame.url,
+          prompt: frame.prompt,
+          generatedAt: frame.generatedAt ? String(frame.generatedAt) : undefined,
+          model: frame.model,
+        }).catch((err) => console.error('Failed to cache frame:', err))
+
+        // Update Zustand state
+        set((state) => ({
+          frames: { ...state.frames, [frame.id]: frame }
+        }))
+      },
+      deleteFrame: (id) => {
+        // Delete from IndexedDB in background
+        assetCache.deleteFrame(id).catch((err) => console.error('Failed to delete cached frame:', err))
+
+        // Update Zustand state
+        set((state) => {
+          const { [id]: _, ...rest } = state.frames
+          return { frames: rest }
+        })
+      },
       getFramesForClip: (clipId, type) => {
         const { frames } = get()
         return Object.values(frames)
@@ -161,15 +189,44 @@ export const useProjectStore = create<ProjectStore>()(
 
       // Videos
       videos: {},
-      setVideo: (video) => set((state) => ({
-        videos: { ...state.videos, [video.id]: video }
-      })),
-      updateVideoStatus: (id, status, error) => set((state) => ({
-        videos: {
-          ...state.videos,
-          [id]: { ...state.videos[id], status, error }
-        }
-      })),
+      setVideo: (video) => {
+        // Save to IndexedDB in background
+        assetCache.saveVideo({
+          id: video.id,
+          clipId: video.clipId,
+          url: video.url,
+          duration: video.duration,
+          status: video.status,
+          startFrameId: video.startFrameId,
+          endFrameId: video.endFrameId,
+          motionPrompt: video.motionPrompt,
+          model: video.model,
+          generatedAt: video.generatedAt ? String(video.generatedAt) : undefined,
+          jobId: video.jobId,
+          error: video.error,
+        }).catch((err) => console.error('Failed to cache video:', err))
+
+        // Update Zustand state
+        set((state) => ({
+          videos: { ...state.videos, [video.id]: video }
+        }))
+      },
+      updateVideoStatus: (id, status, error) => {
+        // Update IndexedDB in background
+        assetCache.getVideo(id).then((cached) => {
+          if (cached) {
+            assetCache.saveVideo({ ...cached, status, error })
+          }
+        }).catch((err) => console.error('Failed to update cached video status:', err))
+
+        // Update Zustand state
+        set((state) => ({
+          videos: {
+            ...state.videos,
+            [id]: { ...state.videos[id], status, error }
+          }
+        }))
+      },
       getVideosForClip: (clipId) => {
         const { videos } = get()
         return Object.values(videos)
@@ -260,21 +317,91 @@ export const useProjectStore = create<ProjectStore>()(
         }
       }),
 
+      // Asset cache
+      assetsLoaded: false,
+      rehydrateAssets: async () => {
+        try {
+          if (!assetCache.isIndexedDBAvailable()) {
+            console.warn('IndexedDB not available, skipping asset rehydration')
+            set({ assetsLoaded: true })
+            return
+          }
+
+          // Load all frames from IndexedDB
+          const cachedFrames = await assetCache.getAllFrames()
+          const framesMap: Record<string, Frame> = {}
+          for (const cached of cachedFrames) {
+            framesMap[cached.id] = {
+              id: cached.id,
+              clipId: cached.clipId,
+              type: cached.type,
+              source: cached.source,
+              url: cached.url,
+              prompt: cached.prompt,
+              generatedAt: cached.generatedAt ? new Date(cached.generatedAt) : undefined,
+              model: cached.model,
+            }
+          }
+
+          // Load all videos from IndexedDB
+          const cachedVideos = await assetCache.getAllVideos()
+          const videosMap: Record<string, GeneratedVideo> = {}
+          for (const cached of cachedVideos) {
+            videosMap[cached.id] = {
+              id: cached.id,
+              clipId: cached.clipId,
+              url: cached.url,
+              duration: cached.duration,
+              status: cached.status,
+              startFrameId: cached.startFrameId,
+              endFrameId: cached.endFrameId,
+              motionPrompt: cached.motionPrompt,
+              model: cached.model,
+              generatedAt: cached.generatedAt ? new Date(cached.generatedAt) : undefined,
+              jobId: cached.jobId,
+              error: cached.error,
+            }
+          }
+
+          set({
+            frames: framesMap,
+            videos: videosMap,
+            assetsLoaded: true,
+          })
+
+          console.log(`Rehydrated ${cachedFrames.length} frames and ${cachedVideos.length} videos from cache`)
+        } catch (err) {
+          console.error('Failed to rehydrate assets from cache:', err)
+          set({ assetsLoaded: true })
+        }
+      },
+      getStorageStats: () => assetCache.getStorageStats(),
+      clearAssetCache: async () => {
+        await assetCache.clearAllAssets()
+        set({ frames: {}, videos: {} })
+      },
+
       // Reset
-      reset: () => set({
-        project: null,
-        audioFile: null,
-        transcript: [],
-        scenes: [],
-        clips: [],
-        frames: {},
-        videos: {},
-        timeline: initialTimelineState,
-        globalStyle: '',
-        // Keep model settings on reset
-        history: [],
-        historyIndex: -1,
-      }),
+      reset: () => {
+        // Clear IndexedDB in background
+        assetCache.clearAllAssets().catch((err) => console.error('Failed to clear asset cache:', err))
+
+        set({
+          project: null,
+          audioFile: null,
+          transcript: [],
+          scenes: [],
+          clips: [],
+          frames: {},
+          videos: {},
+          timeline: initialTimelineState,
+          globalStyle: '',
+          // Keep model settings on reset
+          history: [],
+          historyIndex: -1,
+          assetsLoaded: true,
+        })
+      },
     }),
     {
       name: 'radiostar-project',

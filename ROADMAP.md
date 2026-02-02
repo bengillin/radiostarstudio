@@ -139,6 +139,10 @@ Replace preview area with detail panel when scene or clip is selected:
 ### In Progress
 - [ ] Fix Imagen 4.0 empty response issue
 
+### Recently Completed
+- [x] Asset caching with IndexedDB (frames and videos persist across refresh)
+- [x] Storage indicator in header (shows cache size, allows clearing)
+
 ### Next Up
-- [ ] Asset caching with IndexedDB
 - [ ] Lazy load thumbnails
+- [ ] Beat detection and auto-cut on beats

@@ -6,20 +6,17 @@ Feature ideas and enhancements for future development.
 
 ## High Priority
 
-### Asset Caching with IndexedDB
+### ~~Asset Caching with IndexedDB~~ ✅ COMPLETED
 **Problem:** Generated frames and videos are lost on page refresh since they're too large for localStorage.
 
-**Solution:**
-- Use IndexedDB to store generated assets (frames, videos)
-- Store asset metadata in Zustand/localStorage, actual blobs in IndexedDB
-- Lazy load thumbnails from IndexedDB on mount
-- Add cache management UI (clear cache, show storage used)
+**Solution:** Implemented IndexedDB-based asset cache.
 
-**Implementation:**
-- Create `src/lib/asset-cache.ts` with IndexedDB wrapper
-- Store frames/videos by ID with clipId index
-- On app load, rehydrate clip assets from IndexedDB
-- Add storage indicator in settings
+**What was built:**
+- `src/lib/asset-cache.ts` - IndexedDB wrapper with full CRUD for frames/videos
+- `src/components/providers/AssetProvider.tsx` - Rehydrates assets on app mount
+- `src/components/ui/StorageIndicator.tsx` - Shows cache stats, allows clearing
+- Updated `project-store.ts` to automatically sync with IndexedDB
+- Storage indicator in studio header showing frame/video count and size
 
 ---
 

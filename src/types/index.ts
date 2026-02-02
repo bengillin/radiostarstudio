@@ -241,3 +241,48 @@ export interface ScenePlanResponse {
   scenes: Omit<Scene, 'clips'>[]
   globalStyle: string
 }
+
+// ============================================
+// MEDIA LIBRARY
+// ============================================
+
+export interface ReferenceImage {
+  id: string
+  name: string
+  url: string
+  uploadedAt: Date
+  tags?: string[]
+  width?: number
+  height?: number
+}
+
+export type AssetType = 'frame' | 'video' | 'audio' | 'reference'
+export type LibraryFilter = 'all' | 'frames' | 'videos' | 'audio' | 'references'
+
+export interface LibraryAsset {
+  id: string
+  type: AssetType
+  name: string
+  url: string
+  clipId?: string
+  clipTitle?: string
+  createdAt: Date
+  size?: number
+  metadata: {
+    // Frame-specific
+    frameType?: 'start' | 'end'
+    source?: 'upload' | 'generated'
+    prompt?: string
+    model?: string
+    // Video-specific
+    duration?: number
+    status?: VideoStatus
+    motionPrompt?: string
+    // Audio-specific
+    audioDuration?: number
+    // Reference-specific
+    tags?: string[]
+    width?: number
+    height?: number
+  }
+}

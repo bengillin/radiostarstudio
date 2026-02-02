@@ -66,6 +66,7 @@ interface ProjectStore {
   // Videos
   videos: Record<string, GeneratedVideo>
   setVideo: (video: GeneratedVideo) => void
+  deleteVideo: (id: string) => void
   updateVideoStatus: (id: string, status: GeneratedVideo['status'], error?: string) => void
   getVideosForClip: (clipId: string) => GeneratedVideo[]
 
@@ -444,6 +445,16 @@ export const useProjectStore = create<ProjectStore>()(
         set((state) => ({
           videos: { ...state.videos, [video.id]: video }
         }))
+      },
+      deleteVideo: (id) => {
+        // Delete from IndexedDB in background
+        assetCache.deleteVideo(id).catch((err) => console.error('Failed to delete cached video:', err))
+
+        // Update Zustand state
+        set((state) => {
+          const { [id]: _, ...rest } = state.videos
+          return { videos: rest }
+        })
       },
       updateVideoStatus: (id, status, error) => {
         // Update IndexedDB in background

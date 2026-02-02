@@ -6,9 +6,11 @@
  */
 
 const DB_NAME = 'radiostar-assets'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const FRAMES_STORE = 'frames'
 const VIDEOS_STORE = 'videos'
+const REFERENCES_STORE = 'references'
+const AUDIO_STORE = 'audio'
 
 interface CachedFrame {
   id: string
@@ -36,6 +38,24 @@ interface CachedVideo {
   error?: string
 }
 
+interface CachedReference {
+  id: string
+  name: string
+  url: string // base64 data URL
+  uploadedAt: string
+  tags?: string[]
+  width?: number
+  height?: number
+}
+
+interface CachedAudio {
+  id: string
+  name: string
+  url: string // base64 data URL
+  duration: number
+  uploadedAt: string
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null
 
 /**
@@ -58,17 +78,34 @@ function getDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result
+      const oldVersion = event.oldVersion
 
-      // Create frames store with clipId index
-      if (!db.objectStoreNames.contains(FRAMES_STORE)) {
-        const framesStore = db.createObjectStore(FRAMES_STORE, { keyPath: 'id' })
-        framesStore.createIndex('clipId', 'clipId', { unique: false })
+      // v1: Create frames and videos stores
+      if (oldVersion < 1) {
+        // Create frames store with clipId index
+        if (!db.objectStoreNames.contains(FRAMES_STORE)) {
+          const framesStore = db.createObjectStore(FRAMES_STORE, { keyPath: 'id' })
+          framesStore.createIndex('clipId', 'clipId', { unique: false })
+        }
+
+        // Create videos store with clipId index
+        if (!db.objectStoreNames.contains(VIDEOS_STORE)) {
+          const videosStore = db.createObjectStore(VIDEOS_STORE, { keyPath: 'id' })
+          videosStore.createIndex('clipId', 'clipId', { unique: false })
+        }
       }
 
-      // Create videos store with clipId index
-      if (!db.objectStoreNames.contains(VIDEOS_STORE)) {
-        const videosStore = db.createObjectStore(VIDEOS_STORE, { keyPath: 'id' })
-        videosStore.createIndex('clipId', 'clipId', { unique: false })
+      // v2: Add references and audio stores
+      if (oldVersion < 2) {
+        // Create references store
+        if (!db.objectStoreNames.contains(REFERENCES_STORE)) {
+          db.createObjectStore(REFERENCES_STORE, { keyPath: 'id' })
+        }
+
+        // Create audio store
+        if (!db.objectStoreNames.contains(AUDIO_STORE)) {
+          db.createObjectStore(AUDIO_STORE, { keyPath: 'id' })
+        }
       }
     }
   })
@@ -305,6 +342,126 @@ export async function deleteVideosByClipId(clipId: string): Promise<void> {
 }
 
 // ============================================
+// REFERENCE IMAGE OPERATIONS
+// ============================================
+
+/**
+ * Save a reference image to IndexedDB
+ */
+export async function saveReference(ref: CachedReference): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(REFERENCES_STORE, 'readwrite')
+    const store = transaction.objectStore(REFERENCES_STORE)
+    const request = store.put(ref)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get a reference image by ID
+ */
+export async function getReference(id: string): Promise<CachedReference | null> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(REFERENCES_STORE, 'readonly')
+    const store = transaction.objectStore(REFERENCES_STORE)
+    const request = store.get(id)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get all reference images
+ */
+export async function getAllReferences(): Promise<CachedReference[]> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(REFERENCES_STORE, 'readonly')
+    const store = transaction.objectStore(REFERENCES_STORE)
+    const request = store.getAll()
+    request.onsuccess = () => resolve(request.result || [])
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Delete a reference image by ID
+ */
+export async function deleteReference(id: string): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(REFERENCES_STORE, 'readwrite')
+    const store = transaction.objectStore(REFERENCES_STORE)
+    const request = store.delete(id)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+// ============================================
+// AUDIO OPERATIONS
+// ============================================
+
+/**
+ * Save audio to IndexedDB
+ */
+export async function saveAudio(audio: CachedAudio): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(AUDIO_STORE, 'readwrite')
+    const store = transaction.objectStore(AUDIO_STORE)
+    const request = store.put(audio)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get audio by ID
+ */
+export async function getAudio(id: string): Promise<CachedAudio | null> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(AUDIO_STORE, 'readonly')
+    const store = transaction.objectStore(AUDIO_STORE)
+    const request = store.get(id)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get all audio files
+ */
+export async function getAllAudio(): Promise<CachedAudio[]> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(AUDIO_STORE, 'readonly')
+    const store = transaction.objectStore(AUDIO_STORE)
+    const request = store.getAll()
+    request.onsuccess = () => resolve(request.result || [])
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Delete audio by ID
+ */
+export async function deleteAudio(id: string): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(AUDIO_STORE, 'readwrite')
+    const store = transaction.objectStore(AUDIO_STORE)
+    const request = store.delete(id)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+// ============================================
 // UTILITY OPERATIONS
 // ============================================
 
@@ -315,25 +472,41 @@ export async function clearAllAssets(): Promise<void> {
   const db = await getDB()
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction([FRAMES_STORE, VIDEOS_STORE], 'readwrite')
+    const transaction = db.transaction(
+      [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE],
+      'readwrite'
+    )
 
-    const framesStore = transaction.objectStore(FRAMES_STORE)
-    const videosStore = transaction.objectStore(VIDEOS_STORE)
-
+    const stores = [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE]
     let completed = 0
+
     const checkComplete = () => {
       completed++
-      if (completed === 2) resolve()
+      if (completed === stores.length) resolve()
     }
 
-    const framesRequest = framesStore.clear()
-    framesRequest.onsuccess = checkComplete
-    framesRequest.onerror = () => reject(framesRequest.error)
-
-    const videosRequest = videosStore.clear()
-    videosRequest.onsuccess = checkComplete
-    videosRequest.onerror = () => reject(videosRequest.error)
+    for (const storeName of stores) {
+      const store = transaction.objectStore(storeName)
+      const request = store.clear()
+      request.onsuccess = checkComplete
+      request.onerror = () => reject(request.error)
+    }
   })
+}
+
+/**
+ * Format bytes to human-readable string
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  } else if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  } else if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  } else {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  }
 }
 
 /**
@@ -342,43 +515,65 @@ export async function clearAllAssets(): Promise<void> {
 export async function getStorageStats(): Promise<{
   frameCount: number
   videoCount: number
+  referenceCount: number
+  audioCount: number
   estimatedSize: string
+  breakdown: {
+    frames: string
+    videos: string
+    references: string
+    audio: string
+  }
 }> {
   const frames = await getAllFrames()
   const videos = await getAllVideos()
+  const references = await getAllReferences()
+  const audioFiles = await getAllAudio()
 
-  // Estimate size from base64 strings
-  let totalBytes = 0
+  // Estimate size from base64 strings (base64 is ~33% larger than binary)
+  let frameBytes = 0
+  let videoBytes = 0
+  let referenceBytes = 0
+  let audioBytes = 0
 
   for (const frame of frames) {
     if (frame.url) {
-      // base64 is ~33% larger than binary, so divide by 1.33
-      totalBytes += (frame.url.length * 0.75)
+      frameBytes += (frame.url.length * 0.75)
     }
   }
 
   for (const video of videos) {
     if (video.url) {
-      totalBytes += (video.url.length * 0.75)
+      videoBytes += (video.url.length * 0.75)
     }
   }
 
-  // Format size
-  let estimatedSize: string
-  if (totalBytes < 1024) {
-    estimatedSize = `${totalBytes} B`
-  } else if (totalBytes < 1024 * 1024) {
-    estimatedSize = `${(totalBytes / 1024).toFixed(1)} KB`
-  } else if (totalBytes < 1024 * 1024 * 1024) {
-    estimatedSize = `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`
-  } else {
-    estimatedSize = `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  for (const ref of references) {
+    if (ref.url) {
+      referenceBytes += (ref.url.length * 0.75)
+    }
   }
+
+  for (const audio of audioFiles) {
+    if (audio.url) {
+      audioBytes += (audio.url.length * 0.75)
+    }
+  }
+
+  const totalBytes = frameBytes + videoBytes + referenceBytes + audioBytes
 
   return {
     frameCount: frames.length,
     videoCount: videos.length,
-    estimatedSize,
+    referenceCount: references.length,
+    audioCount: audioFiles.length,
+    estimatedSize: formatBytes(totalBytes),
+    breakdown: {
+      frames: formatBytes(frameBytes),
+      videos: formatBytes(videoBytes),
+      references: formatBytes(referenceBytes),
+      audio: formatBytes(audioBytes),
+    },
   }
 }
 

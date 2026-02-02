@@ -6,7 +6,7 @@ import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
   Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video, Keyboard,
-  Plus, Trash2
+  Plus, Trash2, FolderOpen
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Waveform } from '@/components/ui/Waveform'
@@ -17,6 +17,7 @@ import { StorageIndicator } from '@/components/ui/StorageIndicator'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { GenerationQueue } from '@/components/ui/GenerationQueue'
 import { ExportDialog } from '@/components/ui/ExportDialog'
+import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
@@ -100,6 +101,7 @@ function StudioPageContent() {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showQueueModal, setShowQueueModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [showMediaLibrary, setShowMediaLibrary] = useState(false)
 
   // Scene/Clip management state
   const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
@@ -295,6 +297,13 @@ function StudioPageContent() {
           if (e.metaKey || e.ctrlKey) {
             e.preventDefault()
             setShowExportDialog(true)
+          }
+          break
+        case 'KeyM':
+          // M = open media library
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            setShowMediaLibrary(true)
           }
           break
       }
@@ -634,6 +643,14 @@ function StudioPageContent() {
               </span>
             </button>
           )}
+          <button
+            onClick={() => setShowMediaLibrary(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-colors"
+            title="Media library (M)"
+          >
+            <FolderOpen className="w-4 h-4 text-white/60" />
+            <span className="text-white/60">Library</span>
+          </button>
           <StorageIndicator />
           <button
             onClick={() => setShowShortcutsModal(true)}
@@ -1457,6 +1474,12 @@ function StudioPageContent() {
       <ExportDialog
         isOpen={showExportDialog}
         onClose={() => setShowExportDialog(false)}
+      />
+
+      {/* Media library */}
+      <MediaLibraryModal
+        isOpen={showMediaLibrary}
+        onClose={() => setShowMediaLibrary(false)}
       />
 
       {/* Scene delete confirmation */}

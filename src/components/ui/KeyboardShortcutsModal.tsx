@@ -28,6 +28,7 @@ const shortcuts = [
   ]},
   { category: 'Tools', items: [
     { keys: ['G'], description: 'Open generation queue' },
+    { keys: ['M'], description: 'Open media library' },
     { keys: ['⌘', 'E'], description: 'Export video' },
     { keys: ['?'], description: 'Show keyboard shortcuts' },
   ]},

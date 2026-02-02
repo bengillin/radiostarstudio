@@ -3,6 +3,13 @@ import { GoogleGenAI } from '@google/genai'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
+// Helper to extract base64 and mime type from data URL
+function parseDataUrl(dataUrl: string): { mimeType: string; imageBytes: string } | null {
+  const match = dataUrl.match(/^data:(.+);base64,(.+)$/)
+  if (!match) return null
+  return { mimeType: match[1], imageBytes: match[2] }
+}
+
 export async function POST(request: NextRequest) {
   console.log('[generate-video] API called')
 
@@ -26,22 +33,27 @@ export async function POST(request: NextRequest) {
     }
 
     const videoModel = model || 'veo-3.1-generate-preview'
+    const hasEndFrame = !!endFrameUrl
     console.log('[generate-video] Generating video for clip:', clipId, 'model:', videoModel)
+    console.log('[generate-video] Using interpolation:', hasEndFrame ? 'yes (start + end frames)' : 'no (start frame only)')
     console.log('[generate-video] Motion prompt:', motionPrompt?.substring(0, 100))
 
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
-    // Extract base64 from data URL
-    const match = startFrameUrl.match(/^data:(.+);base64,(.+)$/)
-    if (!match) {
+    // Parse start frame
+    const startFrame = parseDataUrl(startFrameUrl)
+    if (!startFrame) {
       return NextResponse.json(
-        { error: 'Invalid image data URL' },
+        { error: 'Invalid start frame data URL' },
         { status: 400 }
       )
     }
 
-    const mimeType = match[1]
-    const imageBytes = match[2]
+    // Parse end frame if provided
+    const endFrame = endFrameUrl ? parseDataUrl(endFrameUrl) : null
+    if (endFrameUrl && !endFrame) {
+      console.log('[generate-video] Warning: Invalid end frame URL, proceeding without interpolation')
+    }
 
     // Build motion prompt with scene context
     const sceneContext = scene ? `
@@ -52,30 +64,46 @@ Scene context:
 - Time: ${scene.when || 'unspecified'}
 ` : ''
 
+    const interpolationNote = endFrame
+      ? 'Smoothly interpolate motion from the first frame to the last frame.'
+      : 'Create smooth, cinematic camera movement. Maintain visual consistency with the input frame.'
+
     const fullPrompt = `${motionPrompt || 'Subtle cinematic motion'}
 
 ${sceneContext}
 Visual style: ${globalStyle || 'cinematic, high quality'}
 
-Create smooth, cinematic camera movement. Maintain visual consistency with the input frame.`
+${interpolationNote}`
 
     console.log('[generate-video] Calling Veo API with model:', videoModel)
+
+    // Build config - add lastFrame for interpolation if end frame is available
+    const config: Record<string, unknown> = {
+      numberOfVideos: 1,
+      durationSeconds: 8,
+      aspectRatio: '16:9',
+      personGeneration: 'allow_adult',
+      resolution: '720p',
+    }
+
+    // Add last frame for interpolation (Veo 3.1 feature)
+    if (endFrame) {
+      config.lastFrame = {
+        imageBytes: endFrame.imageBytes,
+        mimeType: endFrame.mimeType,
+      }
+      console.log('[generate-video] Interpolation mode: first + last frame')
+    }
 
     // Generate video using Veo
     let operation = await ai.models.generateVideos({
       model: videoModel,
       prompt: fullPrompt,
       image: {
-        imageBytes,
-        mimeType,
+        imageBytes: startFrame.imageBytes,
+        mimeType: startFrame.mimeType,
       },
-      config: {
-        numberOfVideos: 1,
-        durationSeconds: 8,
-        aspectRatio: '16:9',
-        personGeneration: 'allow_adult',
-        resolution: '720p',
-      },
+      config,
     })
 
     console.log('[generate-video] Video generation started, polling...')
@@ -132,7 +160,7 @@ Create smooth, cinematic camera movement. Maintain visual consistency with the i
     const base64 = Buffer.from(buffer).toString('base64')
     const videoDataUrl = `data:video/mp4;base64,${base64}`
 
-    console.log('[generate-video] Success!')
+    console.log('[generate-video] Success!', endFrame ? '(interpolated)' : '(single frame)')
 
     return NextResponse.json({
       success: true,
@@ -143,9 +171,11 @@ Create smooth, cinematic camera movement. Maintain visual consistency with the i
         duration: 8,
         status: 'complete',
         startFrameId: `frame-${clipId}-start`,
+        endFrameId: endFrame ? `frame-${clipId}-end` : undefined,
         motionPrompt: fullPrompt,
         model: videoModel,
         generatedAt: new Date().toISOString(),
+        interpolated: !!endFrame, // Track if video used start+end frame interpolation
       },
     })
   } catch (error) {

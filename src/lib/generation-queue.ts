@@ -89,9 +89,12 @@ async function generateVideo(
     throw new Error('Clip not found')
   }
 
-  // Find start frame for this clip
+  // Find start and end frames for this clip
   const startFrame = Object.values(state.frames).find(
     (f: Frame) => f.clipId === clipId && f.type === 'start'
+  )
+  const endFrame = Object.values(state.frames).find(
+    (f: Frame) => f.clipId === clipId && f.type === 'end'
   )
 
   if (!startFrame) {
@@ -110,8 +113,18 @@ async function generateVideo(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       clipId,
-      startFrame: startFrame.url,
+      startFrameUrl: startFrame.url,
+      endFrameUrl: endFrame?.url, // Pass end frame for interpolation if available
       motionPrompt,
+      scene: scene ? {
+        title: scene.title,
+        who: scene.who,
+        what: scene.what,
+        when: scene.when,
+        where: scene.where,
+        why: scene.why,
+      } : undefined,
+      globalStyle: state.globalStyle,
       model: state.modelSettings.video,
     }),
   })

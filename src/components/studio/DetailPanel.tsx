@@ -13,32 +13,37 @@ interface DetailPanelProps {
   clip: Clip
   scene: Scene
   onClose: () => void
-  onGenerateFrame: (type: 'start' | 'end') => void
-  onGenerateVideo: () => void
   framePrompt: string
   setFramePrompt: (prompt: string) => void
   motionPrompt: string
   setMotionPrompt: (prompt: string) => void
-  isGeneratingFrame: boolean
-  isGeneratingVideo: boolean
-  generatingFrameType: 'start' | 'end'
 }
 
 export function DetailPanel({
   clip,
   scene,
   onClose,
-  onGenerateFrame,
-  onGenerateVideo,
   framePrompt,
   setFramePrompt,
   motionPrompt,
   setMotionPrompt,
-  isGeneratingFrame,
-  isGeneratingVideo,
-  generatingFrameType,
 }: DetailPanelProps) {
-  const { frames, videos, updateClip, updateScene, getFramesForClip, getVideosForClip } = useProjectStore()
+  const {
+    frames,
+    videos,
+    updateClip,
+    updateScene,
+    getFramesForClip,
+    getVideosForClip,
+    queueFrame,
+    queueVideo,
+    isClipQueued,
+  } = useProjectStore()
+
+  // Check if frames/videos are queued
+  const isStartFrameQueued = isClipQueued(clip.id, 'frame', 'start')
+  const isEndFrameQueued = isClipQueued(clip.id, 'frame', 'end')
+  const isVideoQueued = isClipQueued(clip.id, 'video')
   const [activeTab, setActiveTab] = useState<'frames' | 'video' | 'properties'>('frames')
   const [expandedSection, setExpandedSection] = useState<'start' | 'end' | 'video' | null>('start')
 
@@ -122,10 +127,10 @@ export function DetailPanel({
               {expandedSection === 'start' && (
                 <div className="p-4 space-y-4">
                   {/* Active Frame Preview */}
-                  {isGeneratingFrame && generatingFrameType === 'start' ? (
+                  {isStartFrameQueued ? (
                     <div className="aspect-video rounded-lg bg-gradient-to-br from-brand-500/20 to-purple-500/20 border border-brand-500/30 flex flex-col items-center justify-center gap-3 animate-pulse">
                       <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
-                      <p className="text-sm text-white/60">Generating frame...</p>
+                      <p className="text-sm text-white/60">Queued for generation...</p>
                     </div>
                   ) : activeStartFrame ? (
                     <div className="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/20">
@@ -142,12 +147,12 @@ export function DetailPanel({
                   )}
 
                   {/* Version History */}
-                  {(startFrames.length > 0 || (isGeneratingFrame && generatingFrameType === 'start')) && (
+                  {(startFrames.length > 0 || isStartFrameQueued) && (
                     <div>
                       <p className="text-xs text-white/40 mb-2">Version History</p>
                       <div className="flex gap-2 overflow-x-auto pb-2">
                         {/* Generating placeholder */}
-                        {isGeneratingFrame && generatingFrameType === 'start' && (
+                        {isStartFrameQueued && (
                           <div className="relative flex-shrink-0 w-20 h-14 rounded overflow-hidden border-2 border-brand-500/50 bg-gradient-to-br from-brand-500/20 to-purple-500/20 animate-pulse flex items-center justify-center">
                             <Loader2 className="w-4 h-4 text-brand-500 animate-spin" />
                           </div>
@@ -184,12 +189,15 @@ export function DetailPanel({
                       className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                     />
                     <button
-                      onClick={() => onGenerateFrame('start')}
-                      disabled={isGeneratingFrame || !framePrompt.trim()}
+                      onClick={() => queueFrame(clip.id, 'start', framePrompt.trim() || undefined)}
+                      disabled={isStartFrameQueued}
                       className="w-full py-2 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                     >
-                      {isGeneratingFrame && generatingFrameType === 'start' ? (
-                        <span className="animate-pulse">Generating...</span>
+                      {isStartFrameQueued ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Queued...
+                        </>
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4" />
@@ -217,10 +225,10 @@ export function DetailPanel({
 
               {expandedSection === 'end' && (
                 <div className="p-4 space-y-4">
-                  {isGeneratingFrame && generatingFrameType === 'end' ? (
+                  {isEndFrameQueued ? (
                     <div className="aspect-video rounded-lg bg-gradient-to-br from-brand-500/20 to-purple-500/20 border border-brand-500/30 flex flex-col items-center justify-center gap-3 animate-pulse">
                       <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
-                      <p className="text-sm text-white/60">Generating frame...</p>
+                      <p className="text-sm text-white/60">Queued for generation...</p>
                     </div>
                   ) : activeEndFrame ? (
                     <div className="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/20">
@@ -236,12 +244,12 @@ export function DetailPanel({
                     </div>
                   )}
 
-                  {(endFrames.length > 0 || (isGeneratingFrame && generatingFrameType === 'end')) && (
+                  {(endFrames.length > 0 || isEndFrameQueued) && (
                     <div>
                       <p className="text-xs text-white/40 mb-2">Version History</p>
                       <div className="flex gap-2 overflow-x-auto pb-2">
                         {/* Generating placeholder */}
-                        {isGeneratingFrame && generatingFrameType === 'end' && (
+                        {isEndFrameQueued && (
                           <div className="relative flex-shrink-0 w-20 h-14 rounded overflow-hidden border-2 border-brand-500/50 bg-gradient-to-br from-brand-500/20 to-purple-500/20 animate-pulse flex items-center justify-center">
                             <Loader2 className="w-4 h-4 text-brand-500 animate-spin" />
                           </div>
@@ -277,12 +285,15 @@ export function DetailPanel({
                       className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                     />
                     <button
-                      onClick={() => onGenerateFrame('end')}
-                      disabled={isGeneratingFrame || !framePrompt.trim()}
+                      onClick={() => queueFrame(clip.id, 'end', framePrompt.trim() || undefined)}
+                      disabled={isEndFrameQueued}
                       className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                     >
-                      {isGeneratingFrame && generatingFrameType === 'end' ? (
-                        <span className="animate-pulse">Generating...</span>
+                      {isEndFrameQueued ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Queued...
+                        </>
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4" />
@@ -300,12 +311,12 @@ export function DetailPanel({
         {activeTab === 'video' && (
           <div className="space-y-4">
             {/* Active Video Preview */}
-            {isGeneratingVideo ? (
+            {isVideoQueued ? (
               <div className="aspect-video rounded-lg bg-gradient-to-br from-purple-500/20 to-brand-500/20 border border-purple-500/30 flex flex-col items-center justify-center gap-3">
                 <Loader2 className="w-10 h-10 text-purple-500 animate-spin" />
                 <div className="text-center">
-                  <p className="text-sm text-white/80">Generating video...</p>
-                  <p className="text-xs text-white/40 mt-1">This may take a few minutes</p>
+                  <p className="text-sm text-white/80">Video queued for generation</p>
+                  <p className="text-xs text-white/40 mt-1">Check the queue panel for progress</p>
                 </div>
               </div>
             ) : activeVideo ? (
@@ -368,12 +379,15 @@ export function DetailPanel({
                   className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                 />
                 <button
-                  onClick={onGenerateVideo}
-                  disabled={isGeneratingVideo}
+                  onClick={() => queueVideo(clip.id, motionPrompt.trim() || undefined)}
+                  disabled={isVideoQueued}
                   className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                 >
-                  {isGeneratingVideo ? (
-                    <span className="animate-pulse">Generating Video...</span>
+                  {isVideoQueued ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Queued...
+                    </>
                   ) : (
                     <>
                       <Video className="w-4 h-4" />

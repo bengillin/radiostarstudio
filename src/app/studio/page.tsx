@@ -18,6 +18,7 @@ import { GenerationQueue } from '@/components/ui/GenerationQueue'
 import { ExportDialog } from '@/components/ui/ExportDialog'
 import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
+import { useWorkflowAutomation } from '@/hooks/useWorkflowAutomation'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
 import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
@@ -51,6 +52,7 @@ function StudioPageContent() {
   const { showToast } = useToast()
   const {
     audioFile,
+    setAudioFile,
     transcript,
     setTranscript,
     scenes,
@@ -68,6 +70,9 @@ function StudioPageContent() {
     generationQueue,
     queueAllFrames,
     queueAllVideos,
+    queueFrame,
+    queueVideo,
+    isClipQueued,
     startQueue,
     frames,
     setFrame,
@@ -85,27 +90,32 @@ function StudioPageContent() {
     redo,
   } = useProjectStore()
 
+  // Workflow automation
+  const {
+    startTranscription,
+    startPlanning,
+    stage: workflowStage,
+    progress: workflowProgress,
+    error: workflowError,
+  } = useWorkflowAutomation({
+    onTranscriptionComplete: () => showToast('Transcription complete', 'success'),
+    onPlanningComplete: () => showToast('Scene planning complete', 'success'),
+    onError: (message) => showToast(message, 'error'),
+  })
+
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const [transcriptionError, setTranscriptionError] = useState<string | null>(null)
-  const [isPlanning, setIsPlanning] = useState(false)
-  const [planningError, setPlanningError] = useState<string | null>(null)
   const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null)
   // Use store's multi-select, but keep a single "active" clip for detail panel
   const selectedClipIds = timeline?.selectedClipIds ?? []
   const selectedClipId = selectedClipIds.length > 0 ? selectedClipIds[selectedClipIds.length - 1] : null
   const [framePrompt, setFramePrompt] = useState('')
-  const [isGeneratingFrame, setIsGeneratingFrame] = useState(false)
-  const [frameError, setFrameError] = useState<string | null>(null)
-  const [generatingFrameType, setGeneratingFrameType] = useState<'start' | 'end'>('start')
   const [motionPrompt, setMotionPrompt] = useState('')
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false)
-  const [videoError, setVideoError] = useState<string | null>(null)
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showQueueModal, setShowQueueModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
+  const [leftPanelTab, setLeftPanelTab] = useState<'lyrics' | 'scenes'>('scenes')
 
   // Scene/Clip management state
   const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
@@ -130,17 +140,50 @@ function StudioPageContent() {
     ? 'export'
     : 'generate'
 
-  // Redirect to home if no audio
-  useEffect(() => {
-    if (!audioFile) {
-      const timeout = setTimeout(() => {
-        if (!useProjectStore.getState().audioFile) {
-          router.push('/')
-        }
-      }, 500)
-      return () => clearTimeout(timeout)
+  // Audio file handling
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false)
+  const [isDraggingAudio, setIsDraggingAudio] = useState(false)
+
+  const processAudioFile = useCallback(async (file: File) => {
+    setIsLoadingAudio(true)
+    try {
+      const url = URL.createObjectURL(file)
+      const audio = new Audio(url)
+      await new Promise<void>((resolve) => {
+        audio.onloadedmetadata = () => resolve()
+        audio.onerror = () => resolve()
+      })
+
+      setAudioFile({
+        id: crypto.randomUUID(),
+        name: file.name,
+        url,
+        duration: audio.duration || 0,
+        file,
+      })
+      showToast('Audio loaded', 'success')
+    } catch (error) {
+      showToast('Failed to load audio file', 'error')
+    } finally {
+      setIsLoadingAudio(false)
     }
-  }, [audioFile, router])
+  }, [setAudioFile, showToast])
+
+  const handleAudioDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDraggingAudio(false)
+    const file = e.dataTransfer.files[0]
+    if (file && file.type.startsWith('audio/')) {
+      processAudioFile(file)
+    }
+  }, [processAudioFile])
+
+  const handleAudioFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file && file.type.startsWith('audio/')) {
+      processAudioFile(file)
+    }
+  }, [processAudioFile])
 
   // Audio playback handlers
   useEffect(() => {
@@ -317,216 +360,6 @@ function StudioPageContent() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [currentTime, selectedClipIds, isPlaying, scenes, togglePlayback, handleSeek, handleDeleteSelectedClip, handleSplitAtPlayhead, undo, redo, saveToHistory, createScene, createClip, showToast])
 
-  const handleTranscribe = async () => {
-    if (!audioFile?.file) return
-
-    setIsTranscribing(true)
-    setTranscriptionError(null)
-
-    try {
-      const formData = new FormData()
-      formData.append('audio', audioFile.file)
-
-      const response = await fetch('/api/transcribe', {
-        method: 'POST',
-        body: formData,
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        console.error('Transcription API error:', data)
-        throw new Error(data.details || data.error || 'Transcription failed')
-      }
-
-      if (data.segments) {
-        setTranscript(data.segments as TranscriptSegment[])
-
-        // Auto-suggest visual style based on transcript
-        if (!globalStyle) {
-          try {
-            const styleResponse = await fetch('/api/suggest-style', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ transcript: data.segments }),
-            })
-            const styleData = await styleResponse.json()
-            if (styleData.style) {
-              setGlobalStyle(styleData.style)
-              showToast('Visual style suggested based on lyrics', 'info')
-            }
-          } catch (styleError) {
-            console.error('Style suggestion error:', styleError)
-            // Non-blocking - just log the error
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Transcription error:', error)
-      setTranscriptionError('Failed to transcribe audio. Please try again.')
-    } finally {
-      setIsTranscribing(false)
-    }
-  }
-
-  const handlePlanScenes = async () => {
-    if (transcript.length === 0) return
-
-    setIsPlanning(true)
-    setPlanningError(null)
-
-    try {
-      const response = await fetch('/api/plan-scenes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript,
-          style: globalStyle,
-          duration: audioFile?.duration,
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        console.error('Scene planning API error:', data)
-        throw new Error(data.details || data.error || 'Scene planning failed')
-      }
-
-      if (data.scenes) {
-        const newScenes = data.scenes as Scene[]
-        setScenes(newScenes)
-
-        // Auto-generate clips from transcript segments mapped to scenes
-        const newClips = transcript.flatMap((segment: TranscriptSegment, segIndex: number) => {
-          // Find which scene this segment belongs to based on time overlap
-          const matchingScene = newScenes.find((scene: Scene) =>
-            segment.start >= scene.startTime && segment.start < scene.endTime
-          ) || newScenes.find((scene: Scene) =>
-            // Fallback: find scene that overlaps with segment
-            segment.start < scene.endTime && segment.end > scene.startTime
-          )
-
-          if (!matchingScene) return []
-
-          return [{
-            id: `clip-${segment.id}`,
-            sceneId: matchingScene.id,
-            segmentId: segment.id,
-            title: `${(segment.type || 'clip').charAt(0).toUpperCase() + (segment.type || 'clip').slice(1)} - ${(segment.text || '').slice(0, 30)}${segment.text && segment.text.length > 30 ? '...' : ''}`,
-            startTime: segment.start,
-            endTime: segment.end,
-            order: segIndex,
-          }]
-        })
-
-        setClips(newClips)
-      }
-      if (data.globalStyle && !globalStyle) {
-        setGlobalStyle(data.globalStyle)
-      }
-    } catch (error) {
-      console.error('Scene planning error:', error)
-      setPlanningError('Failed to plan scenes. Please try again.')
-    } finally {
-      setIsPlanning(false)
-    }
-  }
-
-  const handleGenerateFrame = async (type: 'start' | 'end') => {
-    if (!selectedClipId || !framePrompt.trim()) return
-
-    const clip = clips.find((c: Clip) => c.id === selectedClipId)
-    if (!clip) return
-
-    const scene = scenes.find((s: Scene) => s.id === clip.sceneId)
-
-    setIsGeneratingFrame(true)
-    setGeneratingFrameType(type)
-    setFrameError(null)
-
-    try {
-      const response = await fetch('/api/generate-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: framePrompt,
-          clipId: selectedClipId,
-          type,
-          scene,
-          globalStyle,
-          model: modelSettings.image,
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.details || data.error || 'Frame generation failed')
-      }
-
-      if (data.frame) {
-        setFrame(data.frame as Frame)
-        // Update clip with frame reference
-        updateClip(selectedClipId, {
-          [type === 'start' ? 'startFrame' : 'endFrame']: data.frame,
-        })
-      }
-    } catch (error) {
-      console.error('Frame generation error:', error)
-      setFrameError(error instanceof Error ? error.message : 'Failed to generate frame')
-    } finally {
-      setIsGeneratingFrame(false)
-    }
-  }
-
-  const handleGenerateVideo = async () => {
-    if (!selectedClipId) return
-
-    const clip = clips.find((c: Clip) => c.id === selectedClipId)
-    if (!clip?.startFrame) return
-
-    const scene = scenes.find((s: Scene) => s.id === clip.sceneId)
-    const startFrameUrl = typeof clip.startFrame === 'object' ? clip.startFrame.url : ''
-
-    if (!startFrameUrl) return
-
-    setIsGeneratingVideo(true)
-    setVideoError(null)
-
-    try {
-      const response = await fetch('/api/generate-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clipId: selectedClipId,
-          startFrameUrl,
-          endFrameUrl: clip.endFrame && typeof clip.endFrame === 'object' ? clip.endFrame.url : undefined,
-          motionPrompt,
-          scene,
-          globalStyle,
-          model: modelSettings.video,
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.details || data.error || 'Video generation failed')
-      }
-
-      if (data.video) {
-        setVideo(data.video as GeneratedVideo)
-        updateClip(selectedClipId, { video: data.video })
-      }
-    } catch (error) {
-      console.error('Video generation error:', error)
-      setVideoError(error instanceof Error ? error.message : 'Failed to generate video')
-    } finally {
-      setIsGeneratingVideo(false)
-    }
-  }
-
   // Get selected clip and its scene
   const selectedClip = clips.find((c: Clip) => c.id === selectedClipId)
   const selectedScene = selectedClip ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
@@ -580,18 +413,10 @@ function StudioPageContent() {
     setFramePrompt(autoPrompt)
   }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle])
 
-  if (!audioFile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-black">
-        <Loader2 className="w-8 h-8 text-white/40 animate-spin" />
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-black">
       {/* Hidden audio element */}
-      <audio ref={audioRef} src={audioFile.url} preload="auto" />
+      {audioFile && <audio ref={audioRef} src={audioFile.url} preload="auto" />}
 
       {/* Header */}
       <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between">
@@ -630,23 +455,30 @@ function StudioPageContent() {
         </div>
 
         <div className="flex items-center gap-4 justify-end">
-          {/* Queue indicator */}
-          {generationQueue.items.length > 0 && (
-            <button
-              onClick={() => setShowQueueModal(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30 rounded-lg text-sm transition-colors"
-            >
-              {generationQueue.isProcessing && !generationQueue.isPaused ? (
-                <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
-              ) : (
-                <Layers className="w-4 h-4 text-brand-400" />
-              )}
+          {/* Queue indicator - always visible */}
+          <button
+            onClick={() => setShowQueueModal(true)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+              generationQueue.items.length > 0
+                ? 'bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30'
+                : 'bg-white/5 hover:bg-white/10 border border-white/10'
+            }`}
+            title="Generation queue (G)"
+          >
+            {generationQueue.isProcessing && !generationQueue.isPaused ? (
+              <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
+            ) : (
+              <Layers className={`w-4 h-4 ${generationQueue.items.length > 0 ? 'text-brand-400' : 'text-white/60'}`} />
+            )}
+            {generationQueue.items.length > 0 ? (
               <span className="text-brand-400">
                 {generationQueue.items.filter(i => i.status === 'complete').length}/
                 {generationQueue.items.length}
               </span>
-            </button>
-          )}
+            ) : (
+              <span className="text-white/60">Queue</span>
+            )}
+          </button>
           <button
             onClick={() => setShowMediaLibrary(true)}
             className="flex items-center gap-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-colors"
@@ -670,314 +502,298 @@ function StudioPageContent() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Upper section: 3-column layout */}
         <div className="flex-1 flex min-h-0">
-          {/* Left panel - Properties */}
-          <aside className="w-80 border-r border-white/10 p-4 overflow-y-auto flex-shrink-0">
-          <div className="space-y-6">
-            {/* Audio info */}
-            <div>
-              <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                Audio
-              </h3>
-              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                <p className="font-medium truncate">{audioFile.name}</p>
-                <p className="text-sm text-white/40 mt-1">
-                  {formatTime(audioFile.duration)}
-                </p>
-              </div>
+          {/* Left panel - Tabbed Properties */}
+          <aside className="w-80 border-r border-white/10 flex flex-col flex-shrink-0">
+            {/* Tabs */}
+            <div className="flex border-b border-white/10 flex-shrink-0">
+              <button
+                onClick={() => setLeftPanelTab('lyrics')}
+                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                  leftPanelTab === 'lyrics'
+                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+                }`}
+              >
+                Lyrics {transcript.length > 0 && `(${transcript.length})`}
+              </button>
+              <button
+                onClick={() => setLeftPanelTab('scenes')}
+                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                  leftPanelTab === 'scenes'
+                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+                }`}
+              >
+                Scenes {scenes.length > 0 && `(${scenes.length})`}
+              </button>
             </div>
 
-            {/* Transcript segments */}
-            {transcript.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Transcript ({transcript.length} segments)
-                </h3>
-                <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {transcript.map((segment: TranscriptSegment) => (
-                    <div
-                      key={segment.id}
-                      className="p-3 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:border-white/20 transition-colors"
-                      onClick={() => handleSeek(segment.start)}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 uppercase">
-                          {segment.type}
-                        </span>
-                        <span className="text-xs text-white/40">
-                          {formatTime(segment.start)}
-                        </span>
-                      </div>
-                      <p className="text-sm text-white/70 line-clamp-2">{segment.text}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Scenes */}
-            {(scenes.length > 0 || audioFile) && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider">
-                    Scenes ({scenes.length})
-                  </h3>
-                  <button
-                    onClick={() => {
-                      saveToHistory()
-                      createScene()
-                      showToast('Scene created', 'success')
-                    }}
-                    className="p-1 hover:bg-white/10 rounded transition-colors"
-                    title="Add scene"
-                  >
-                    <Plus className="w-4 h-4 text-white/60" />
-                  </button>
-                </div>
+            {/* Tab content */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {leftPanelTab === 'lyrics' ? (
                 <div className="space-y-2">
-                  {scenes.map((scene: Scene) => {
-                    const isExpanded = expandedSceneId === scene.id
-                    return (
+                  {transcript.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Music className="w-8 h-8 text-white/20 mx-auto mb-2" />
+                      <p className="text-sm text-white/40">No lyrics yet</p>
+                      <p className="text-xs text-white/30 mt-1">
+                        {audioFile ? 'Transcribe audio to see lyrics' : 'Upload audio first'}
+                      </p>
+                    </div>
+                  ) : (
+                    transcript.map((segment: TranscriptSegment) => (
                       <div
-                        key={scene.id}
-                        className="group rounded-lg bg-white/5 border border-white/10 overflow-hidden"
+                        key={segment.id}
+                        className="p-3 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:border-white/20 transition-colors"
+                        onClick={() => handleSeek(segment.start)}
                       >
-                        <div
-                          className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
-                          onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <p className="font-medium truncate">{scene.title}</p>
-                              <span className="text-xs text-white/40 flex-shrink-0">
-                                {formatTime(scene.startTime)} - {formatTime(scene.endTime)}
-                              </span>
-                            </div>
-                            <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
-                          </div>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
-                                setSceneToDelete({ id: scene.id, clipCount: sceneClips.length })
-                              }}
-                              className="p-1 hover:bg-red-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
-                              title="Delete scene"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
-                            </button>
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-white/40" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-white/40" />
-                            )}
-                          </div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 uppercase">
+                            {segment.type}
+                          </span>
+                          <span className="text-xs text-white/40">
+                            {formatTime(segment.start)}
+                          </span>
                         </div>
-
-                        {isExpanded && (
-                          <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
-                            {/* Editable 5 Ws */}
-                            <div className="flex items-start gap-2">
-                              <Users className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-xs text-white/40 uppercase mb-1">Who</p>
-                                <input
-                                  type="text"
-                                  value={scene.who?.join(', ') || ''}
-                                  onChange={(e) => updateScene(scene.id, { who: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                                  placeholder="Characters/subjects..."
-                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-xs text-white/40 uppercase mb-1">What</p>
-                                <input
-                                  type="text"
-                                  value={scene.what || ''}
-                                  onChange={(e) => updateScene(scene.id, { what: e.target.value })}
-                                  placeholder="Action/event..."
-                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <Clock className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-xs text-white/40 uppercase mb-1">When</p>
-                                <input
-                                  type="text"
-                                  value={scene.when || ''}
-                                  onChange={(e) => updateScene(scene.id, { when: e.target.value })}
-                                  placeholder="Time period..."
-                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <MapPin className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-xs text-white/40 uppercase mb-1">Where</p>
-                                <input
-                                  type="text"
-                                  value={scene.where || ''}
-                                  onChange={(e) => updateScene(scene.id, { where: e.target.value })}
-                                  placeholder="Location..."
-                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <Heart className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-xs text-white/40 uppercase mb-1">Why</p>
-                                <input
-                                  type="text"
-                                  value={scene.why || ''}
-                                  onChange={(e) => updateScene(scene.id, { why: e.target.value })}
-                                  placeholder="Mood/motivation..."
-                                  className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Clips in this scene */}
-                            {(() => {
-                              const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
-                              return (
-                                <div className="mt-3 pt-3 border-t border-white/10">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <p className="text-xs text-white/40 uppercase">Clips ({sceneClips.length})</p>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        saveToHistory()
-                                        const newStart = sceneClips.length > 0
-                                          ? sceneClips[sceneClips.length - 1].endTime
-                                          : scene.startTime
-                                        const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
-                                        if (newEnd > newStart) {
-                                          createClip(scene.id, newStart, newEnd)
-                                          showToast('Clip created', 'success')
-                                        } else {
-                                          showToast('No room for new clip in scene', 'error')
-                                        }
-                                      }}
-                                      className="p-1 hover:bg-white/10 rounded transition-colors"
-                                      title="Add clip to scene"
-                                    >
-                                      <Plus className="w-3.5 h-3.5 text-white/60" />
-                                    </button>
-                                  </div>
-                                  <div className="space-y-2">
-                                    {sceneClips.map((clip: Clip) => {
-                                      const isSelected = selectedClipIds.includes(clip.id)
-                                      const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
-                                      const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
-                                      return (
-                                        <div
-                                          key={clip.id}
-                                          className={`p-2 rounded text-xs cursor-pointer transition-colors ${
-                                            isSelected
-                                              ? 'bg-brand-500/20 border border-brand-500/50'
-                                              : 'bg-white/5 hover:bg-white/10 border border-transparent'
-                                          }`}
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            isSelected ? clearSelection() : selectClip(clip.id)
-                                          }}
-                                        >
-                                          <div className="flex items-center justify-between mb-1">
-                                            <span className="text-white/70 truncate font-medium">{clip.title}</span>
-                                            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                                              {(() => {
-                                                const duration = clip.endTime - clip.startTime
-                                                const needsMultipleVideos = duration > VEO_MAX_DURATION
-                                                return (
-                                                  <span
-                                                    className={`text-[10px] px-1 rounded ${
-                                                      needsMultipleVideos
-                                                        ? 'bg-yellow-500/20 text-yellow-400'
-                                                        : 'bg-white/10 text-white/50'
-                                                    }`}
-                                                    title={needsMultipleVideos ? `Clip is ${duration.toFixed(1)}s - will need multiple ${VEO_MAX_DURATION}s videos` : `${duration.toFixed(1)}s clip`}
-                                                  >
-                                                    {duration.toFixed(1)}s
-                                                  </span>
-                                                )
-                                              })()}
-                                              <span className="text-white/40">
-                                                {formatTime(clip.startTime)}
-                                              </span>
-                                            </div>
-                                          </div>
-                                          {/* Frame thumbnails */}
-                                          {(startFrame || endFrame) && (
-                                            <div className="flex gap-1 mt-2">
-                                              {startFrame && (
-                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
-                                                  <img
-                                                    src={typeof startFrame === 'object' ? startFrame.url : ''}
-                                                    alt="Start frame"
-                                                    className="w-full h-full object-cover"
-                                                  />
-                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">S</span>
-                                                </div>
-                                              )}
-                                              {endFrame && (
-                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
-                                                  <img
-                                                    src={typeof endFrame === 'object' ? endFrame.url : ''}
-                                                    alt="End frame"
-                                                    className="w-full h-full object-cover"
-                                                  />
-                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">E</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )
-                                    })}
-                                    {sceneClips.length === 0 && (
-                                      <p className="text-xs text-white/30 italic py-2">No clips yet</p>
-                                    )}
-                                  </div>
-                                </div>
-                              )
-                            })()}
-                          </div>
-                        )}
+                        <p className="text-sm text-white/70 line-clamp-2">{segment.text}</p>
                       </div>
-                    )
-                  })}
+                    ))
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
-        </aside>
+              ) : (
+                <div className="space-y-2">
+                  {/* Add scene button */}
+                  {audioFile && (
+                    <button
+                      onClick={() => {
+                        saveToHistory()
+                        createScene()
+                        showToast('Scene created', 'success')
+                      }}
+                      className="w-full p-2 border border-dashed border-white/20 hover:border-white/40 rounded-lg text-sm text-white/50 hover:text-white/70 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Scene
+                    </button>
+                  )}
+
+                  {scenes.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Layers className="w-8 h-8 text-white/20 mx-auto mb-2" />
+                      <p className="text-sm text-white/40">No scenes yet</p>
+                      <p className="text-xs text-white/30 mt-1">
+                        {audioFile
+                          ? transcript.length > 0
+                            ? 'Plan scenes from lyrics'
+                            : 'Transcribe audio first'
+                          : 'Upload audio first'
+                        }
+                      </p>
+                    </div>
+                  ) : (
+                    scenes.map((scene: Scene) => {
+                      const isExpanded = expandedSceneId === scene.id
+                      const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
+                      return (
+                        <div
+                          key={scene.id}
+                          className="group rounded-lg bg-white/5 border border-white/10 overflow-hidden"
+                        >
+                          <div
+                            className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
+                            onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-medium truncate text-sm">{scene.title}</p>
+                                <span className="text-xs text-white/40 flex-shrink-0">
+                                  {formatTime(scene.startTime)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSceneToDelete({ id: scene.id, clipCount: sceneClips.length })
+                                }}
+                                className="p-1 hover:bg-red-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                title="Delete scene"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
+                              </button>
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4 text-white/40" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-white/40" />
+                              )}
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
+                              {/* Editable 5 Ws */}
+                              <div className="flex items-start gap-2">
+                                <Users className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs text-white/40 uppercase mb-1">Who</p>
+                                  <input
+                                    type="text"
+                                    value={scene.who?.join(', ') || ''}
+                                    onChange={(e) => updateScene(scene.id, { who: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                    placeholder="Characters/subjects..."
+                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs text-white/40 uppercase mb-1">What</p>
+                                  <input
+                                    type="text"
+                                    value={scene.what || ''}
+                                    onChange={(e) => updateScene(scene.id, { what: e.target.value })}
+                                    placeholder="Action/event..."
+                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <Clock className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs text-white/40 uppercase mb-1">When</p>
+                                  <input
+                                    type="text"
+                                    value={scene.when || ''}
+                                    onChange={(e) => updateScene(scene.id, { when: e.target.value })}
+                                    placeholder="Time period..."
+                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <MapPin className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs text-white/40 uppercase mb-1">Where</p>
+                                  <input
+                                    type="text"
+                                    value={scene.where || ''}
+                                    onChange={(e) => updateScene(scene.id, { where: e.target.value })}
+                                    placeholder="Location..."
+                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2">
+                                <Heart className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
+                                <div className="flex-1">
+                                  <p className="text-xs text-white/40 uppercase mb-1">Why</p>
+                                  <input
+                                    type="text"
+                                    value={scene.why || ''}
+                                    onChange={(e) => updateScene(scene.id, { why: e.target.value })}
+                                    placeholder="Mood/motivation..."
+                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Clips in this scene */}
+                              <div className="mt-3 pt-3 border-t border-white/10">
+                                <div className="flex items-center justify-between mb-2">
+                                  <p className="text-xs text-white/40 uppercase">Clips ({sceneClips.length})</p>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      saveToHistory()
+                                      const newStart = sceneClips.length > 0
+                                        ? sceneClips[sceneClips.length - 1].endTime
+                                        : scene.startTime
+                                      const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
+                                      if (newEnd > newStart) {
+                                        createClip(scene.id, newStart, newEnd)
+                                        showToast('Clip created', 'success')
+                                      } else {
+                                        showToast('No room for new clip in scene', 'error')
+                                      }
+                                    }}
+                                    className="p-1 hover:bg-white/10 rounded transition-colors"
+                                    title="Add clip to scene"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-white/60" />
+                                  </button>
+                                </div>
+                                <div className="space-y-2">
+                                  {sceneClips.map((clip: Clip) => {
+                                    const isSelected = selectedClipIds.includes(clip.id)
+                                    const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
+                                    const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
+                                    return (
+                                      <div
+                                        key={clip.id}
+                                        className={`p-2 rounded text-xs cursor-pointer transition-colors ${
+                                          isSelected
+                                            ? 'bg-brand-500/20 border border-brand-500/50'
+                                            : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                                        }`}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          isSelected ? clearSelection() : selectClip(clip.id)
+                                        }}
+                                      >
+                                        <div className="flex items-center justify-between mb-1">
+                                          <span className="text-white/70 truncate font-medium">{clip.title}</span>
+                                          <span className="text-white/40 flex-shrink-0 ml-2">
+                                            {(clip.endTime - clip.startTime).toFixed(1)}s
+                                          </span>
+                                        </div>
+                                        {(startFrame || endFrame) && (
+                                          <div className="flex gap-1 mt-2">
+                                            {startFrame && (
+                                              <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                <img
+                                                  src={typeof startFrame === 'object' ? startFrame.url : ''}
+                                                  alt="Start"
+                                                  className="w-full h-full object-cover"
+                                                />
+                                                <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">S</span>
+                                              </div>
+                                            )}
+                                            {endFrame && (
+                                              <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                <img
+                                                  src={typeof endFrame === 'object' ? endFrame.url : ''}
+                                                  alt="End"
+                                                  className="w-full h-full object-cover"
+                                                />
+                                                <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">E</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })}
+                                  {sceneClips.length === 0 && (
+                                    <p className="text-xs text-white/30 italic py-2">No clips yet</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
 
           {/* Center - Preview */}
           <div className="flex-1 flex flex-col min-w-0">
-            {/* Playback Controls */}
-            <div className="flex items-center justify-center gap-4 py-3 border-b border-white/10 bg-black/30">
-              <button
-                onClick={togglePlayback}
-                className="w-10 h-10 rounded-full bg-brand-500 hover:bg-brand-600 flex items-center justify-center transition-colors"
-              >
-                {isPlaying ? (
-                  <Pause className="w-5 h-5 text-white" />
-                ) : (
-                  <Play className="w-5 h-5 text-white ml-0.5" />
-                )}
-              </button>
-              <span className="text-sm text-white/60 font-mono">
-                {formatTime(currentTime)} / {formatTime(audioFile.duration)}
-              </span>
-            </div>
-
             {/* Preview area or Detail Panel */}
             <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
               {selectedClip && selectedScene ? (
@@ -986,20 +802,42 @@ function StudioPageContent() {
                     clip={selectedClip}
                     scene={selectedScene}
                     onClose={() => clearSelection()}
-                    onGenerateFrame={handleGenerateFrame}
-                    onGenerateVideo={handleGenerateVideo}
                     framePrompt={framePrompt}
                     setFramePrompt={setFramePrompt}
                     motionPrompt={motionPrompt}
                     setMotionPrompt={setMotionPrompt}
-                    isGeneratingFrame={isGeneratingFrame}
-                    isGeneratingVideo={isGeneratingVideo}
-                    generatingFrameType={generatingFrameType}
                   />
                 </div>
               ) : (
                 <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
-                  {transcript.length > 0 ? (
+                  {!audioFile ? (
+                    <label
+                      className={`w-full h-full flex flex-col items-center justify-center cursor-pointer transition-colors rounded-xl ${
+                        isDraggingAudio ? 'bg-brand-500/10' : 'hover:bg-white/5'
+                      }`}
+                      onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+                      onDragLeave={() => setIsDraggingAudio(false)}
+                      onDrop={handleAudioDrop}
+                    >
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        onChange={handleAudioFileSelect}
+                      />
+                      {isLoadingAudio ? (
+                        <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
+                      ) : (
+                        <Music className="w-12 h-12 text-white/20 mb-4" />
+                      )}
+                      <p className="text-lg text-white/60 font-medium">
+                        {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
+                      </p>
+                      <p className="text-sm text-white/30 mt-2">
+                        or click to browse
+                      </p>
+                    </label>
+                  ) : transcript.length > 0 ? (
                     <div className="text-center p-8">
                       <p className="text-white/60 mb-2">
                         {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
@@ -1019,69 +857,29 @@ function StudioPageContent() {
         {/* Right panel - Actions */}
         <aside className="w-80 border-l border-white/10 p-4 overflow-y-auto flex-shrink-0">
           <div className="space-y-6">
-            {currentStep === 'transcribe' && (
+            {/* Workflow status info - shown during early stages */}
+            {(currentStep === 'transcribe' || currentStep === 'plan') && (
               <div>
                 <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Transcription
+                  Workflow Progress
                 </h3>
-                <button
-                  onClick={handleTranscribe}
-                  disabled={isTranscribing}
-                  className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                >
-                  {isTranscribing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Transcribing...
-                    </>
-                  ) : (
-                    <>
-                      Start Transcription
-                      <ChevronRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-                <p className="text-xs text-white/40 mt-2">
-                  Analyze audio for word-level timestamps and segment detection
-                </p>
-                {transcriptionError && (
-                  <p className="text-xs text-red-400 mt-2">{transcriptionError}</p>
-                )}
+                <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-center">
+                  <p className="text-sm text-white/60">
+                    {currentStep === 'transcribe'
+                      ? 'Click "Transcribe" in the workflow bar above to analyze your audio'
+                      : 'Click "Plan Scenes" in the workflow bar above to create scenes'}
+                  </p>
+                  <p className="text-xs text-white/30 mt-2">
+                    {workflowStage === 'transcribing' && `Transcribing... ${workflowProgress.transcription}%`}
+                    {workflowStage === 'planning' && `Planning... ${workflowProgress.planning}%`}
+                    {workflowStage === 'audio_loaded' && 'Ready to transcribe'}
+                    {workflowStage === 'transcribed' && 'Transcription complete - ready to plan scenes'}
+                  </p>
+                </div>
               </div>
             )}
 
-            {currentStep === 'plan' && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Scene Planning
-                </h3>
-                <button
-                  onClick={handlePlanScenes}
-                  disabled={isPlanning}
-                  className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                >
-                  {isPlanning ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Planning...
-                    </>
-                  ) : (
-                    <>
-                      Plan Scenes with AI
-                      <ChevronRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-                <p className="text-xs text-white/40 mt-2">
-                  Break down the song into visual scenes with the 5 Ws
-                </p>
-                {planningError && (
-                  <p className="text-xs text-red-400 mt-2">{planningError}</p>
-                )}
-              </div>
-            )}
-
-            {currentStep === 'generate' && (
+            {(currentStep === 'generate' || currentStep === 'export') && (
               <div className="space-y-6">
                 {/* Batch Generation */}
                 <div>
@@ -1160,33 +958,40 @@ function StudioPageContent() {
                       />
                       <div className="flex gap-2 mt-2">
                         <button
-                          onClick={() => handleGenerateFrame('start')}
-                          disabled={isGeneratingFrame || !framePrompt.trim()}
+                          onClick={() => {
+                            if (selectedClipId) {
+                              queueFrame(selectedClipId, 'start', framePrompt.trim() || undefined)
+                              showToast('Start frame queued', 'success')
+                            }
+                          }}
+                          disabled={isClipQueued(selectedClipId!, 'frame', 'start')}
                           className="flex-1 py-2 px-3 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                         >
-                          {isGeneratingFrame && generatingFrameType === 'start' ? (
+                          {isClipQueued(selectedClipId!, 'frame', 'start') ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
                             <Sparkles className="w-4 h-4" />
                           )}
-                          Start Frame
+                          {isClipQueued(selectedClipId!, 'frame', 'start') ? 'Queued' : 'Start Frame'}
                         </button>
                         <button
-                          onClick={() => handleGenerateFrame('end')}
-                          disabled={isGeneratingFrame || !framePrompt.trim()}
+                          onClick={() => {
+                            if (selectedClipId) {
+                              queueFrame(selectedClipId, 'end', framePrompt.trim() || undefined)
+                              showToast('End frame queued', 'success')
+                            }
+                          }}
+                          disabled={isClipQueued(selectedClipId!, 'frame', 'end')}
                           className="flex-1 py-2 px-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                         >
-                          {isGeneratingFrame && generatingFrameType === 'end' ? (
+                          {isClipQueued(selectedClipId!, 'frame', 'end') ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
                             <Sparkles className="w-4 h-4" />
                           )}
-                          End Frame
+                          {isClipQueued(selectedClipId!, 'frame', 'end') ? 'Queued' : 'End Frame'}
                         </button>
                       </div>
-                      {frameError && (
-                        <p className="text-xs text-red-400 mt-2">{frameError}</p>
-                      )}
 
                       {/* Upload frames */}
                       <div className="mt-4">
@@ -1294,14 +1099,19 @@ function StudioPageContent() {
                             className="w-full h-16 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                           />
                           <button
-                            onClick={handleGenerateVideo}
-                            disabled={isGeneratingVideo}
+                            onClick={() => {
+                              if (selectedClipId) {
+                                queueVideo(selectedClipId, motionPrompt.trim() || undefined)
+                                showToast('Video queued', 'success')
+                              }
+                            }}
+                            disabled={isClipQueued(selectedClipId!, 'video')}
                             className="w-full mt-2 py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                           >
-                            {isGeneratingVideo ? (
+                            {isClipQueued(selectedClipId!, 'video') ? (
                               <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                Generating Video...
+                                Queued...
                               </>
                             ) : (
                               <>
@@ -1310,13 +1120,10 @@ function StudioPageContent() {
                               </>
                             )}
                           </button>
-                          {isGeneratingVideo && (
+                          {isClipQueued(selectedClipId!, 'video') && (
                             <p className="text-xs text-white/40 mt-2 text-center">
-                              This may take a few minutes...
+                              Added to queue. Check progress in the queue panel.
                             </p>
-                          )}
-                          {videoError && (
-                            <p className="text-xs text-red-400 mt-2">{videoError}</p>
                           )}
 
                           {/* Video preview */}
@@ -1461,15 +1268,53 @@ function StudioPageContent() {
 
         {/* Unified Timeline - full width at bottom */}
         <div className="h-[280px] flex-shrink-0 border-t border-white/10">
-          <Timeline
-            duration={audioFile.duration}
-            currentTime={currentTime}
-            onSeek={handleSeek}
-            onClipSelect={selectClip}
-            selectedClipIds={selectedClipIds}
-            transcript={transcript}
-            audioUrl={audioFile.url}
-          />
+          {audioFile ? (
+            <Timeline
+              duration={audioFile.duration}
+              currentTime={currentTime}
+              onSeek={handleSeek}
+              onClipSelect={selectClip}
+              selectedClipIds={selectedClipIds}
+              transcript={transcript}
+              audioUrl={audioFile.url}
+              isPlaying={isPlaying}
+              onTogglePlayback={togglePlayback}
+              onStartTranscription={startTranscription}
+              onStartPlanning={startPlanning}
+              onStartGeneration={() => {
+                queueAllFrames('both')
+                startQueue()
+                setShowQueueModal(true)
+              }}
+            />
+          ) : (
+            <label
+              className={`h-full flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                isDraggingAudio ? 'bg-brand-500/10' : 'bg-black/30 hover:bg-white/5'
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+              onDragLeave={() => setIsDraggingAudio(false)}
+              onDrop={handleAudioDrop}
+            >
+              <input
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={handleAudioFileSelect}
+              />
+              <div className="text-center">
+                <div className="flex items-center gap-2 text-white/30 mb-2">
+                  <div className="w-8 h-4 rounded bg-white/10" />
+                  <div className="w-12 h-4 rounded bg-white/10" />
+                  <div className="w-6 h-4 rounded bg-white/10" />
+                  <div className="w-10 h-4 rounded bg-white/10" />
+                </div>
+                <p className="text-sm text-white/40">
+                  {isLoadingAudio ? 'Loading audio...' : 'Add audio to see timeline'}
+                </p>
+              </div>
+            </label>
+          )}
         </div>
       </main>
 

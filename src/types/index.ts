@@ -181,6 +181,9 @@ export interface QueueItem {
   createdAt: Date
   startedAt?: Date
   completedAt?: Date
+  // Optional prompts for single-clip generation
+  prompt?: string        // For frame generation
+  motionPrompt?: string  // For video generation
 }
 
 export interface GenerationQueue {
@@ -240,6 +243,42 @@ export interface TranscriptionResponse {
 export interface ScenePlanResponse {
   scenes: Omit<Scene, 'clips'>[]
   globalStyle: string
+}
+
+// ============================================
+// WORKFLOW STATE
+// ============================================
+
+export type WorkflowStage =
+  | 'empty'           // No audio loaded
+  | 'audio_loaded'    // Audio present, ready to process
+  | 'transcribing'    // Transcription in progress
+  | 'transcribed'     // Transcript ready
+  | 'planning'        // Scene planning in progress
+  | 'planned'         // Scenes/clips created, ready for generation
+  | 'generating'      // Batch generation in progress
+  | 'ready'           // All clips have videos, ready to export
+
+export interface WorkflowError {
+  stage: WorkflowStage
+  message: string
+  details?: string
+  retryable: boolean
+  retryCount: number
+  timestamp: Date
+}
+
+export interface WorkflowProgress {
+  transcription: number  // 0-100
+  planning: number       // 0-100
+  generation: number     // 0-100
+}
+
+export interface WorkflowState {
+  stage: WorkflowStage
+  autoProgress: boolean
+  error: WorkflowError | null
+  progress: WorkflowProgress
 }
 
 // ============================================

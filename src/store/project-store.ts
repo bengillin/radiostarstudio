@@ -11,6 +11,9 @@ import type {
   Project,
   QueueItem,
   GenerationQueue,
+  WorkflowState,
+  WorkflowStage,
+  WorkflowError,
 } from '@/types'
 import * as assetCache from '@/lib/asset-cache'
 
@@ -105,7 +108,7 @@ interface ProjectStore {
 
   // Generation queue
   generationQueue: GenerationQueue
-  addToQueue: (items: Omit<QueueItem, 'id' | 'status' | 'progress' | 'retryCount' | 'createdAt'>[]) => void
+  addToQueue: (items: Omit<QueueItem, 'id' | 'status' | 'progress' | 'retryCount' | 'createdAt' | 'startedAt' | 'completedAt'>[]) => void
   removeFromQueue: (itemId: string) => void
   clearQueue: () => void
   updateQueueItem: (itemId: string, updates: Partial<QueueItem>) => void
@@ -114,6 +117,17 @@ interface ProjectStore {
   resumeQueue: () => void
   queueAllFrames: (type: 'start' | 'end' | 'both') => void
   queueAllVideos: () => void
+  queueFrame: (clipId: string, frameType: 'start' | 'end', prompt?: string) => void
+  queueVideo: (clipId: string, motionPrompt?: string) => void
+  isClipQueued: (clipId: string, type: 'frame' | 'video', frameType?: 'start' | 'end') => boolean
+
+  // Workflow
+  workflow: WorkflowState
+  setWorkflowStage: (stage: WorkflowStage) => void
+  setWorkflowProgress: (key: 'transcription' | 'planning' | 'generation', value: number) => void
+  setWorkflowError: (error: Omit<WorkflowError, 'timestamp'> | null) => void
+  setAutoProgress: (enabled: boolean) => void
+  clearWorkflowError: () => void
 
   // Reset
   reset: () => void
@@ -129,6 +143,17 @@ const initialTimelineState: TimelineState = {
   dragState: null,
 }
 
+const initialWorkflowState: WorkflowState = {
+  stage: 'empty',
+  autoProgress: true, // Auto-advance through stages by default
+  error: null,
+  progress: {
+    transcription: 0,
+    planning: 0,
+    generation: 0,
+  },
+}
+
 export const useProjectStore = create<ProjectStore>()(
   persist(
     (set, get) => ({
@@ -138,13 +163,20 @@ export const useProjectStore = create<ProjectStore>()(
 
       // Audio
       audioFile: null,
-      setAudioFile: (audioFile) => set({
+      setAudioFile: (audioFile) => set((state) => ({
         audioFile,
         // Clear transcript when loading new audio
         transcript: [],
         scenes: [],
         clips: [],
-      }),
+        // Update workflow stage
+        workflow: {
+          ...state.workflow,
+          stage: audioFile ? 'audio_loaded' : 'empty',
+          error: null,
+          progress: { transcription: 0, planning: 0, generation: 0 },
+        },
+      })),
 
       // Transcript
       transcript: [],
@@ -757,12 +789,105 @@ export const useProjectStore = create<ProjectStore>()(
         }
       },
 
+      queueFrame: (clipId, frameType, prompt) => {
+        const { generationQueue, addToQueue, startQueue } = get()
+
+        // Check if already in queue (pending or processing)
+        const alreadyQueued = generationQueue.items.some(
+          (i) => i.clipId === clipId && i.type === 'frame' && i.frameType === frameType &&
+                 (i.status === 'pending' || i.status === 'processing')
+        )
+
+        if (!alreadyQueued) {
+          addToQueue([{ type: 'frame', clipId, frameType, prompt }])
+          // Auto-start queue if not already processing
+          if (!generationQueue.isProcessing) {
+            startQueue()
+          }
+        }
+      },
+
+      queueVideo: (clipId, motionPrompt) => {
+        const { generationQueue, addToQueue, startQueue } = get()
+
+        // Check if already in queue (pending or processing)
+        const alreadyQueued = generationQueue.items.some(
+          (i) => i.clipId === clipId && i.type === 'video' &&
+                 (i.status === 'pending' || i.status === 'processing')
+        )
+
+        if (!alreadyQueued) {
+          addToQueue([{ type: 'video', clipId, motionPrompt }])
+          // Auto-start queue if not already processing
+          if (!generationQueue.isProcessing) {
+            startQueue()
+          }
+        }
+      },
+
+      isClipQueued: (clipId, type, frameType) => {
+        const { generationQueue } = get()
+        return generationQueue.items.some(
+          (i) => i.clipId === clipId && i.type === type &&
+                 (type === 'video' || i.frameType === frameType) &&
+                 (i.status === 'pending' || i.status === 'processing')
+        )
+      },
+
+      // Workflow
+      workflow: initialWorkflowState,
+
+      setWorkflowStage: (stage) => set((state) => ({
+        workflow: {
+          ...state.workflow,
+          stage,
+          // Reset progress for the new stage
+          progress: {
+            ...state.workflow.progress,
+            ...(stage === 'transcribing' ? { transcription: 0 } : {}),
+            ...(stage === 'planning' ? { planning: 0 } : {}),
+            ...(stage === 'generating' ? { generation: 0 } : {}),
+          },
+        },
+      })),
+
+      setWorkflowProgress: (key, value) => set((state) => ({
+        workflow: {
+          ...state.workflow,
+          progress: {
+            ...state.workflow.progress,
+            [key]: value,
+          },
+        },
+      })),
+
+      setWorkflowError: (error) => set((state) => ({
+        workflow: {
+          ...state.workflow,
+          error: error ? { ...error, timestamp: new Date() } : null,
+        },
+      })),
+
+      setAutoProgress: (enabled) => set((state) => ({
+        workflow: {
+          ...state.workflow,
+          autoProgress: enabled,
+        },
+      })),
+
+      clearWorkflowError: () => set((state) => ({
+        workflow: {
+          ...state.workflow,
+          error: null,
+        },
+      })),
+
       // Reset
       reset: () => {
         // Clear IndexedDB in background
         assetCache.clearAllAssets().catch((err) => console.error('Failed to clear asset cache:', err))
 
-        set({
+        set((state) => ({
           project: null,
           audioFile: null,
           transcript: [],
@@ -777,7 +902,12 @@ export const useProjectStore = create<ProjectStore>()(
           historyIndex: -1,
           assetsLoaded: true,
           generationQueue: { items: [], isProcessing: false, isPaused: false },
-        })
+          // Reset workflow but keep autoProgress preference
+          workflow: {
+            ...initialWorkflowState,
+            autoProgress: state.workflow.autoProgress,
+          },
+        }))
       },
     }),
     {
@@ -802,8 +932,28 @@ export const useProjectStore = create<ProjectStore>()(
         modelSettings: state.modelSettings,
         // Persist timeline zoom only
         timeline: { zoom: state.timeline?.zoom ?? 50 },
+        // Persist workflow autoProgress preference only
+        workflow: { autoProgress: state.workflow?.autoProgress ?? true },
         // Don't persist: audioFile (has File object), frames/videos (large blobs), rest of timeline (UI state)
       }),
+      // Custom merge to ensure workflow state is properly initialized
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<ProjectStore>
+        return {
+          ...currentState,
+          ...persisted,
+          // Ensure workflow is properly merged with initial values
+          workflow: {
+            ...initialWorkflowState,
+            autoProgress: persisted.workflow?.autoProgress ?? true,
+          },
+          // Ensure timeline is properly merged
+          timeline: {
+            ...currentState.timeline,
+            zoom: persisted.timeline?.zoom ?? currentState.timeline?.zoom ?? 50,
+          },
+        }
+      },
     }
   )
 )

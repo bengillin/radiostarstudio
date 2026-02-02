@@ -25,7 +25,8 @@ async function sleep(ms: number): Promise<void> {
 async function generateFrame(
   clipId: string,
   frameType: 'start' | 'end',
-  callbacks: ProcessorCallbacks
+  callbacks: ProcessorCallbacks,
+  customPrompt?: string
 ): Promise<Frame> {
   const state = callbacks.getState()
   const clip = state.clips.find(c => c.id === clipId)
@@ -35,18 +36,22 @@ async function generateFrame(
     throw new Error('Clip or scene not found')
   }
 
-  // Build prompt from scene context
-  const parts = [
-    scene.where && `Setting: ${scene.where}`,
-    scene.when && `Time: ${scene.when}`,
-    scene.who?.length && `Characters: ${scene.who.join(', ')}`,
-    scene.what && `Action: ${scene.what}`,
-    scene.why && `Mood: ${scene.why}`,
-    state.globalStyle && `Style: ${state.globalStyle}`,
-    frameType === 'end' && 'This is the ending frame of the scene.',
-  ].filter(Boolean).join('. ')
-
-  const prompt = parts || `A cinematic frame for "${clip.title}"`
+  // Use custom prompt if provided, otherwise build from scene context
+  let prompt: string
+  if (customPrompt) {
+    prompt = customPrompt
+  } else {
+    const parts = [
+      scene.where && `Setting: ${scene.where}`,
+      scene.when && `Time: ${scene.when}`,
+      scene.who?.length && `Characters: ${scene.who.join(', ')}`,
+      scene.what && `Action: ${scene.what}`,
+      scene.why && `Mood: ${scene.why}`,
+      state.globalStyle && `Style: ${state.globalStyle}`,
+      frameType === 'end' && 'This is the ending frame of the scene.',
+    ].filter(Boolean).join('. ')
+    prompt = parts || `A cinematic frame for "${clip.title}"`
+  }
 
   const response = await fetch('/api/generate-frame', {
     method: 'POST',
@@ -79,7 +84,8 @@ async function generateFrame(
 
 async function generateVideo(
   clipId: string,
-  callbacks: ProcessorCallbacks
+  callbacks: ProcessorCallbacks,
+  customMotionPrompt?: string
 ): Promise<GeneratedVideo> {
   const state = callbacks.getState()
   const clip = state.clips.find(c => c.id === clipId)
@@ -101,8 +107,8 @@ async function generateVideo(
     throw new Error('Start frame required for video generation')
   }
 
-  // Build motion prompt from scene context
-  const motionPrompt = [
+  // Use custom motion prompt if provided, otherwise build from scene context
+  const motionPrompt = customMotionPrompt || [
     scene?.what && `Action: ${scene.what}`,
     scene?.why && `Mood: ${scene.why}`,
     'Smooth cinematic motion',
@@ -156,7 +162,7 @@ export async function processQueueItem(
     if (item.type === 'frame') {
       callbacks.updateQueueItem(item.id, { progress: 30 })
 
-      const frame = await generateFrame(item.clipId, item.frameType!, callbacks)
+      const frame = await generateFrame(item.clipId, item.frameType!, callbacks, item.prompt)
 
       callbacks.updateQueueItem(item.id, { progress: 80 })
 
@@ -177,7 +183,7 @@ export async function processQueueItem(
     } else if (item.type === 'video') {
       callbacks.updateQueueItem(item.id, { progress: 20 })
 
-      const video = await generateVideo(item.clipId, callbacks)
+      const video = await generateVideo(item.clipId, callbacks, item.motionPrompt)
 
       callbacks.updateQueueItem(item.id, { progress: 90 })
 

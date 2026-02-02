@@ -116,7 +116,8 @@ export function WaveformTrack({
 
     const rect = containerRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
-    const time = (x / trackWidth) * duration
+    // Convert pixel position to time
+    const time = x / zoom
     onSeek(Math.max(0, Math.min(duration, time)))
   }
 
@@ -133,14 +134,14 @@ export function WaveformTrack({
       {/* Waveform content */}
       <div
         ref={containerRef}
-        className="h-full cursor-pointer"
-        style={{ marginLeft: labelWidth, width: trackWidth }}
+        className="h-full cursor-pointer relative overflow-hidden"
+        style={{ marginLeft: labelWidth }}
         onClick={handleClick}
       >
         {isLoading ? (
-          <div className="w-full h-full animate-pulse bg-white/5" />
+          <div className="absolute inset-0 animate-pulse bg-white/5" />
         ) : (
-          <canvas ref={canvasRef} className="w-full h-full" />
+          <canvas ref={canvasRef} className="absolute top-0 left-0" />
         )}
       </div>
     </div>

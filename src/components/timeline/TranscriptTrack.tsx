@@ -49,7 +49,7 @@ export function TranscriptTrack({
       {/* Segments content */}
       <div
         className="h-full relative"
-        style={{ marginLeft: labelWidth, width: trackWidth }}
+        style={{ marginLeft: labelWidth }}
       >
         {segments.map((segment) => {
           const segmentType = segment.type?.toLowerCase() || 'default'

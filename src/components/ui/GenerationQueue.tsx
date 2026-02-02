@@ -211,7 +211,7 @@ export function GenerationQueue({ isOpen, onClose }: GenerationQueueProps) {
           {generationQueue.items.length === 0 ? (
             <div className="text-center py-8 text-white/40">
               <p>Queue is empty</p>
-              <p className="text-xs mt-1">Use "Generate All Frames" to add items</p>
+              <p className="text-xs mt-1">Generate frames/videos from clips or use batch generation</p>
             </div>
           ) : (
             <div className="space-y-2">

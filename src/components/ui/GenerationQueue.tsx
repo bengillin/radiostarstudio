@@ -39,18 +39,13 @@ export function GenerationQueue({ isOpen, onClose }: GenerationQueueProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
-  // Process queue when started
+  // Process queue when started - only trigger on isProcessing/isPaused changes
+  // NOT on items changes (queue processor handles items internally)
   useEffect(() => {
     if (generationQueue.isProcessing && !generationQueue.isPaused) {
+      // Use store.getState() for fresh state in callbacks, not stale closures
       const callbacks = {
-        getState: () => ({
-          generationQueue,
-          clips,
-          scenes,
-          frames,
-          globalStyle,
-          modelSettings,
-        }),
+        getState: () => useProjectStore.getState(),
         updateQueueItem,
         setFrame,
         setVideo,
@@ -58,7 +53,7 @@ export function GenerationQueue({ isOpen, onClose }: GenerationQueueProps) {
       }
       processQueue(callbacks)
     }
-  }, [generationQueue.isProcessing, generationQueue.isPaused, generationQueue.items])
+  }, [generationQueue.isProcessing, generationQueue.isPaused, updateQueueItem, setFrame, setVideo, updateClip])
 
   const handleStart = useCallback(() => {
     startQueue()

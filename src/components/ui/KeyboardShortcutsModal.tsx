@@ -22,9 +22,12 @@ const shortcuts = [
     { keys: ['⌘', 'Z'], description: 'Undo' },
     { keys: ['⌘', '⇧', 'Z'], description: 'Redo' },
   ]},
-  { category: 'Selection', items: [
+  { category: 'Timeline', items: [
+    { keys: ['Right-click'], description: 'Context menu (add/delete)' },
     { keys: ['⌘', 'Click'], description: 'Toggle clip selection' },
     { keys: ['⇧', 'Click'], description: 'Add to selection' },
+    { keys: ['Drag'], description: 'Move clip on timeline' },
+    { keys: ['Edge drag'], description: 'Trim clip start/end' },
   ]},
   { category: 'Tools', items: [
     { keys: ['G'], description: 'Open generation queue' },

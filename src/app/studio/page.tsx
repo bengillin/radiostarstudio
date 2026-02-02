@@ -9,7 +9,6 @@ import {
   Plus, Trash2, FolderOpen
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
-import { Waveform } from '@/components/ui/Waveform'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
@@ -668,9 +667,11 @@ function StudioPageContent() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left panel - Properties */}
-        <aside className="w-80 border-r border-white/10 p-4 overflow-y-auto flex-shrink-0">
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {/* Upper section: 3-column layout */}
+        <div className="flex-1 flex min-h-0">
+          {/* Left panel - Properties */}
+          <aside className="w-80 border-r border-white/10 p-4 overflow-y-auto flex-shrink-0">
           <div className="space-y-6">
             {/* Audio info */}
             <div>
@@ -958,48 +959,10 @@ function StudioPageContent() {
           </div>
         </aside>
 
-        {/* Center - Preview / Timeline */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* Preview area or Detail Panel */}
-          <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-            {selectedClip && selectedScene ? (
-              <div className="w-full h-full max-w-4xl">
-                <DetailPanel
-                  clip={selectedClip}
-                  scene={selectedScene}
-                  onClose={() => clearSelection()}
-                  onGenerateFrame={handleGenerateFrame}
-                  onGenerateVideo={handleGenerateVideo}
-                  framePrompt={framePrompt}
-                  setFramePrompt={setFramePrompt}
-                  motionPrompt={motionPrompt}
-                  setMotionPrompt={setMotionPrompt}
-                  isGeneratingFrame={isGeneratingFrame}
-                  isGeneratingVideo={isGeneratingVideo}
-                  generatingFrameType={generatingFrameType}
-                />
-              </div>
-            ) : (
-              <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
-                {transcript.length > 0 ? (
-                  <div className="text-center p-8">
-                    <p className="text-white/60 mb-2">
-                      {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
-                    </p>
-                    <p className="text-sm text-white/30">
-                      {formatTime(currentTime)} / {formatTime(audioFile.duration)}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-white/30">Transcribe audio to begin</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Waveform & Controls */}
-          <div className="border-t border-white/10 bg-white/5 p-4">
-            <div className="flex items-center gap-4 mb-4">
+          {/* Center - Preview */}
+          <div className="flex-1 flex flex-col min-w-0">
+            {/* Playback Controls */}
+            <div className="flex items-center justify-center gap-4 py-3 border-b border-white/10 bg-black/30">
               <button
                 onClick={togglePlayback}
                 className="w-10 h-10 rounded-full bg-brand-500 hover:bg-brand-600 flex items-center justify-center transition-colors"
@@ -1010,33 +973,48 @@ function StudioPageContent() {
                   <Play className="w-5 h-5 text-white ml-0.5" />
                 )}
               </button>
-              <span className="text-sm text-white/60 font-mono w-24">
+              <span className="text-sm text-white/60 font-mono">
                 {formatTime(currentTime)} / {formatTime(audioFile.duration)}
               </span>
             </div>
 
-            <Waveform
-              audioUrl={audioFile.url}
-              currentTime={currentTime}
-              duration={audioFile.duration}
-              onSeek={handleSeek}
-              className="h-16"
-            />
-          </div>
-
-          {/* Timeline (shown after scenes are planned) */}
-          {scenes.length > 0 && (
-            <div className="h-48 border-t border-white/10">
-              <Timeline
-                duration={audioFile.duration}
-                currentTime={currentTime}
-                onSeek={handleSeek}
-                onClipSelect={selectClip}
-                selectedClipIds={selectedClipIds}
-              />
+            {/* Preview area or Detail Panel */}
+            <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+              {selectedClip && selectedScene ? (
+                <div className="w-full h-full max-w-4xl">
+                  <DetailPanel
+                    clip={selectedClip}
+                    scene={selectedScene}
+                    onClose={() => clearSelection()}
+                    onGenerateFrame={handleGenerateFrame}
+                    onGenerateVideo={handleGenerateVideo}
+                    framePrompt={framePrompt}
+                    setFramePrompt={setFramePrompt}
+                    motionPrompt={motionPrompt}
+                    setMotionPrompt={setMotionPrompt}
+                    isGeneratingFrame={isGeneratingFrame}
+                    isGeneratingVideo={isGeneratingVideo}
+                    generatingFrameType={generatingFrameType}
+                  />
+                </div>
+              ) : (
+                <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
+                  {transcript.length > 0 ? (
+                    <div className="text-center p-8">
+                      <p className="text-white/60 mb-2">
+                        {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
+                      </p>
+                      <p className="text-sm text-white/30">
+                        Click a clip in the timeline to edit
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-white/30">Transcribe audio to begin</p>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
 
         {/* Right panel - Actions */}
         <aside className="w-80 border-l border-white/10 p-4 overflow-y-auto flex-shrink-0">
@@ -1479,6 +1457,20 @@ function StudioPageContent() {
             </div>
           </div>
         </aside>
+        </div>
+
+        {/* Unified Timeline - full width at bottom */}
+        <div className="h-[280px] flex-shrink-0 border-t border-white/10">
+          <Timeline
+            duration={audioFile.duration}
+            currentTime={currentTime}
+            onSeek={handleSeek}
+            onClipSelect={selectClip}
+            selectedClipIds={selectedClipIds}
+            transcript={transcript}
+            audioUrl={audioFile.url}
+          />
+        </div>
       </main>
 
       {/* Keyboard shortcuts modal */}

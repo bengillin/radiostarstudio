@@ -181,7 +181,7 @@ export async function exportVideo(options: ExportOptions): Promise<Blob> {
   onProgress?.(100, 'Complete!')
 
   // Return as Blob
-  return new Blob([outputData], { type: 'video/mp4' })
+  return new Blob([outputData as BlobPart], { type: 'video/mp4' })
 }
 
 export async function exportSingleClip(
@@ -266,7 +266,7 @@ export async function exportSingleClip(
 
   onProgress?.(100, 'Complete!')
 
-  return new Blob([outputData], { type: 'video/mp4' })
+  return new Blob([outputData as BlobPart], { type: 'video/mp4' })
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

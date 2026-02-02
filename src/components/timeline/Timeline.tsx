@@ -1,10 +1,13 @@
 'use client'
 
-import { useRef, useEffect, useState, useCallback } from 'react'
-import { Maximize2, Scissors } from 'lucide-react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
+import { Maximize2, Scissors, Plus, Trash2, Magnet } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { formatTime } from '@/lib/utils'
-import type { Scene, Clip } from '@/types'
+import { WaveformTrack } from './WaveformTrack'
+import { TranscriptTrack } from './TranscriptTrack'
+import { ContextMenu, type ContextMenuItem } from '@/components/ui/ContextMenu'
+import type { Scene, Clip, TranscriptSegment } from '@/types'
 
 interface TimelineProps {
   duration: number
@@ -12,6 +15,18 @@ interface TimelineProps {
   onSeek: (time: number) => void
   onClipSelect?: (clipId: string, multi?: boolean) => void
   selectedClipIds?: string[]
+  transcript?: TranscriptSegment[]
+  audioUrl?: string
+}
+
+const LABEL_WIDTH = 64 // px for track labels
+const SNAP_THRESHOLD_PX = 8 // pixels within which to snap
+const MIN_CLIP_DURATION = 0.5 // minimum clip duration in seconds
+
+interface SnapPoint {
+  time: number
+  type: 'clip-start' | 'clip-end' | 'scene-start' | 'scene-end' | 'playhead'
+  sourceId?: string
 }
 
 export function Timeline({
@@ -20,14 +35,41 @@ export function Timeline({
   onSeek,
   onClipSelect,
   selectedClipIds = [],
+  transcript = [],
+  audioUrl,
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { scenes, clips, videos, timeline, setTimeline, updateClip, addClip, saveToHistory, handleClipMoved } = useProjectStore()
+  const {
+    scenes,
+    clips,
+    videos,
+    timeline,
+    setTimeline,
+    updateClip,
+    addClip,
+    saveToHistory,
+    handleClipMoved,
+    createScene,
+    createClip,
+    deleteClip,
+    deleteSceneWithClips,
+  } = useProjectStore()
 
   const zoom = timeline.zoom
   const setZoom = (newZoom: number) => setTimeline({ zoom: newZoom })
   const [scrollX, setScrollX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [activeSnapPoint, setActiveSnapPoint] = useState<number | null>(null)
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    track: 'scenes' | 'clips'
+    time: number
+    itemId?: string
+  } | null>(null)
 
   // Trim state
   const [trimState, setTrimState] = useState<{
@@ -48,7 +90,71 @@ export function Timeline({
   } | null>(null)
 
   const timelineWidth = duration * zoom
-  const visibleWidth = containerRef.current?.clientWidth || 800
+
+  // Calculate all snap points
+  const snapPoints = useMemo((): SnapPoint[] => {
+    const points: SnapPoint[] = []
+
+    // Add clip edges
+    clips.forEach((clip: Clip) => {
+      points.push({ time: clip.startTime, type: 'clip-start', sourceId: clip.id })
+      points.push({ time: clip.endTime, type: 'clip-end', sourceId: clip.id })
+    })
+
+    // Add scene boundaries
+    scenes.forEach((scene: Scene) => {
+      points.push({ time: scene.startTime, type: 'scene-start', sourceId: scene.id })
+      points.push({ time: scene.endTime, type: 'scene-end', sourceId: scene.id })
+    })
+
+    // Add playhead
+    points.push({ time: currentTime, type: 'playhead' })
+
+    return points
+  }, [clips, scenes, currentTime])
+
+  // Find nearest snap point
+  const findSnapPoint = useCallback((time: number, excludeClipId?: string): number | null => {
+    if (!snapEnabled) return null
+
+    const thresholdTime = SNAP_THRESHOLD_PX / zoom
+    let nearest: SnapPoint | null = null
+    let nearestDist = Infinity
+
+    for (const point of snapPoints) {
+      // Skip points from the clip being dragged/trimmed
+      if (excludeClipId && point.sourceId === excludeClipId) continue
+
+      const dist = Math.abs(point.time - time)
+      if (dist < thresholdTime && dist < nearestDist) {
+        nearest = point
+        nearestDist = dist
+      }
+    }
+
+    return nearest ? nearest.time : null
+  }, [snapEnabled, snapPoints, zoom])
+
+  // Check for overlapping clips
+  const getOverlappingClips = useCallback((clipId: string, startTime: number, endTime: number): Clip[] => {
+    return clips.filter((c: Clip) => {
+      if (c.id === clipId) return false
+      // Check if clips overlap
+      return startTime < c.endTime && endTime > c.startTime
+    })
+  }, [clips])
+
+  // Get scene for a given time
+  const getSceneAtTime = useCallback((time: number): Scene | undefined => {
+    return scenes.find((s: Scene) => time >= s.startTime && time < s.endTime)
+  }, [scenes])
+
+  // Check if clip fits within its scene
+  const clipFitsInScene = useCallback((clip: Clip): boolean => {
+    const scene = scenes.find((s: Scene) => s.id === clip.sceneId)
+    if (!scene) return true // No scene = no constraint
+    return clip.startTime >= scene.startTime && clip.endTime <= scene.endTime
+  }, [scenes])
 
   // Handle scroll
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -59,22 +165,60 @@ export function Timeline({
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left + scrollX
+    const clickX = e.clientX - rect.left
+    if (clickX < LABEL_WIDTH) return
+
+    const x = clickX + scrollX - LABEL_WIDTH
     const time = x / zoom
     onSeek(Math.max(0, Math.min(duration, time)))
   }
+
+  // Handle right-click for context menu
+  const handleContextMenu = useCallback((
+    e: React.MouseEvent,
+    track: 'scenes' | 'clips',
+    itemId?: string
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (!containerRef.current) return
+
+    const rect = containerRef.current.getBoundingClientRect()
+    const clickX = e.clientX - rect.left + scrollX - LABEL_WIDTH
+    const time = Math.max(0, clickX / zoom)
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      track,
+      time,
+      itemId,
+    })
+  }, [scrollX, zoom])
 
   // Handle playhead drag
   const handlePlayheadDrag = useCallback((e: MouseEvent) => {
     if (!containerRef.current || !isDragging) return
     const rect = containerRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left + scrollX
-    const time = x / zoom
+    const x = e.clientX - rect.left + scrollX - LABEL_WIDTH
+    let time = x / zoom
+
+    // Snap playhead to clip/scene edges
+    const snapTime = findSnapPoint(time)
+    if (snapTime !== null) {
+      time = snapTime
+      setActiveSnapPoint(snapTime)
+    } else {
+      setActiveSnapPoint(null)
+    }
+
     onSeek(Math.max(0, Math.min(duration, time)))
-  }, [isDragging, scrollX, zoom, duration, onSeek])
+  }, [isDragging, scrollX, zoom, duration, onSeek, findSnapPoint])
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false)
+    setActiveSnapPoint(null)
   }, [])
 
   useEffect(() => {
@@ -91,7 +235,7 @@ export function Timeline({
   // Zoom to fit
   const zoomToFit = useCallback(() => {
     if (!containerRef.current) return
-    const containerWidth = containerRef.current.clientWidth - 64 // minus track labels
+    const containerWidth = containerRef.current.clientWidth - LABEL_WIDTH
     const newZoom = Math.max(10, Math.min(200, containerWidth / duration))
     setZoom(Math.round(newZoom))
   }, [duration, setZoom])
@@ -99,8 +243,8 @@ export function Timeline({
   // Trim handlers
   const getEdgeAtPosition = useCallback((clipEl: HTMLElement, mouseX: number): 'start' | 'end' | null => {
     const rect = clipEl.getBoundingClientRect()
-    if (mouseX - rect.left < 8) return 'start'
-    if (rect.right - mouseX < 8) return 'end'
+    if (mouseX - rect.left < 10) return 'start'
+    if (rect.right - mouseX < 10) return 'end'
     return null
   }, [])
 
@@ -121,27 +265,46 @@ export function Timeline({
     if (!trimState) return
     const deltaX = e.clientX - trimState.initialMouseX
     const deltaTime = deltaX / zoom
-    const newTime = Math.max(0, trimState.initialTime + deltaTime)
+    let newTime = Math.max(0, trimState.initialTime + deltaTime)
 
     const clip = clips.find((c: Clip) => c.id === trimState.clipId)
     if (!clip) return
 
+    // Try to snap
+    const snapTime = findSnapPoint(newTime, trimState.clipId)
+    if (snapTime !== null) {
+      newTime = snapTime
+      setActiveSnapPoint(snapTime)
+    } else {
+      setActiveSnapPoint(null)
+    }
+
     if (trimState.edge === 'start') {
-      // Don't let start time go past end time
-      if (newTime < clip.endTime) {
+      // Ensure minimum duration and don't go past end
+      const maxStart = clip.endTime - MIN_CLIP_DURATION
+      newTime = Math.min(newTime, maxStart)
+      if (newTime >= 0) {
         updateClip(trimState.clipId, { startTime: newTime })
       }
     } else {
-      // Don't let end time go before start time
-      if (newTime > clip.startTime) {
-        updateClip(trimState.clipId, { endTime: Math.min(newTime, duration) })
-      }
+      // Ensure minimum duration and don't go before start
+      const minEnd = clip.startTime + MIN_CLIP_DURATION
+      newTime = Math.max(newTime, minEnd)
+      updateClip(trimState.clipId, { endTime: Math.min(newTime, duration) })
     }
-  }, [trimState, zoom, clips, updateClip, duration])
+  }, [trimState, zoom, clips, updateClip, duration, findSnapPoint])
 
   const handleTrimEnd = useCallback(() => {
+    if (trimState) {
+      const clip = clips.find((c: Clip) => c.id === trimState.clipId)
+      if (clip) {
+        // Check if clip should be reassigned to a different scene
+        handleClipMoved(clip.id, clip.startTime, clip.endTime)
+      }
+    }
     setTrimState(null)
-  }, [])
+    setActiveSnapPoint(null)
+  }, [trimState, clips, handleClipMoved])
 
   useEffect(() => {
     if (trimState) {
@@ -175,8 +338,24 @@ export function Timeline({
     const deltaTime = deltaX / zoom
     const clipDuration = dragState.initialEndTime - dragState.initialStartTime
 
-    // Calculate new start time, clamped to valid range
     let newStartTime = Math.max(0, dragState.initialStartTime + deltaTime)
+
+    // Try to snap start edge
+    const snapStart = findSnapPoint(newStartTime, dragState.clipId)
+    if (snapStart !== null) {
+      newStartTime = snapStart
+      setActiveSnapPoint(snapStart)
+    } else {
+      // Try to snap end edge
+      const snapEnd = findSnapPoint(newStartTime + clipDuration, dragState.clipId)
+      if (snapEnd !== null) {
+        newStartTime = snapEnd - clipDuration
+        setActiveSnapPoint(snapEnd)
+      } else {
+        setActiveSnapPoint(null)
+      }
+    }
+
     // Don't let clip extend past duration
     if (newStartTime + clipDuration > duration) {
       newStartTime = duration - clipDuration
@@ -190,18 +369,17 @@ export function Timeline({
     })
 
     setDragState(prev => prev ? { ...prev, currentOffset: deltaTime } : null)
-  }, [dragState, zoom, duration, updateClip])
+  }, [dragState, zoom, duration, updateClip, findSnapPoint])
 
   const handleDragEnd = useCallback(() => {
     if (dragState) {
-      // Get the clip's current position after drag
       const clip = clips.find((c: Clip) => c.id === dragState.clipId)
       if (clip) {
-        // Check if clip moved to a different scene and handle accordingly
         handleClipMoved(clip.id, clip.startTime, clip.endTime)
       }
     }
     setDragState(null)
+    setActiveSnapPoint(null)
   }, [dragState, clips, handleClipMoved])
 
   useEffect(() => {
@@ -217,19 +395,15 @@ export function Timeline({
 
   // Split clip at playhead
   const handleSplitAtPlayhead = useCallback(() => {
-    // Find clip that contains the current time
     const clipToSplit = clips.find((c: Clip) =>
       currentTime > c.startTime && currentTime < c.endTime
     )
 
-    if (!clipToSplit) return // No clip at playhead
+    if (!clipToSplit) return
 
     saveToHistory()
-
-    // Update the original clip to end at playhead
     updateClip(clipToSplit.id, { endTime: currentTime })
 
-    // Create a new clip starting at playhead
     const newClip: Clip = {
       id: `clip-${Date.now()}`,
       sceneId: clipToSplit.sceneId,
@@ -237,13 +411,12 @@ export function Timeline({
       title: `${clipToSplit.title} (split)`,
       startTime: currentTime,
       endTime: clipToSplit.endTime,
-      order: clipToSplit.order + 0.5, // Place after original in order
+      order: clipToSplit.order + 0.5,
     }
 
     addClip(newClip)
   }, [clips, currentTime, saveToHistory, updateClip, addClip])
 
-  // Check if playhead is inside a clip (for enabling split button)
   const canSplit = clips.some((c: Clip) =>
     currentTime > c.startTime && currentTime < c.endTime
   )
@@ -255,16 +428,95 @@ export function Timeline({
     rulerMarks.push(t)
   }
 
-  // Group clips by scene
-  const sceneClips = scenes.map((scene: Scene) => ({
-    scene,
-    clips: clips.filter((c: Clip) => c.sceneId === scene.id).sort((a: Clip, b: Clip) => a.startTime - b.startTime),
-  }))
+  // Context menu items
+  const getContextMenuItems = (): ContextMenuItem[] => {
+    if (!contextMenu) return []
+
+    if (contextMenu.track === 'scenes') {
+      if (contextMenu.itemId) {
+        const sceneClips = clips.filter((c: Clip) => c.sceneId === contextMenu.itemId)
+        return [
+          {
+            id: 'add-clip',
+            label: 'Add Clip Here',
+            icon: Plus,
+            onClick: () => {
+              saveToHistory()
+              createClip(contextMenu.itemId!, contextMenu.time, Math.min(contextMenu.time + 8, duration))
+            },
+          },
+          {
+            id: 'delete-scene',
+            label: `Delete Scene${sceneClips.length > 0 ? ` (${sceneClips.length} clips)` : ''}`,
+            icon: Trash2,
+            danger: true,
+            onClick: () => {
+              saveToHistory()
+              deleteSceneWithClips(contextMenu.itemId!)
+            },
+          },
+        ]
+      } else {
+        return [
+          {
+            id: 'add-scene',
+            label: 'Add Scene Here',
+            icon: Plus,
+            onClick: () => {
+              saveToHistory()
+              createScene()
+            },
+          },
+        ]
+      }
+    } else {
+      if (contextMenu.itemId) {
+        return [
+          {
+            id: 'delete-clip',
+            label: 'Delete Clip',
+            icon: Trash2,
+            danger: true,
+            onClick: () => {
+              saveToHistory()
+              deleteClip(contextMenu.itemId!)
+            },
+          },
+        ]
+      } else {
+        const sceneAtTime = scenes.find((s: Scene) =>
+          contextMenu.time >= s.startTime && contextMenu.time < s.endTime
+        )
+        return [
+          {
+            id: 'add-clip',
+            label: 'Add Clip Here',
+            icon: Plus,
+            onClick: () => {
+              if (sceneAtTime) {
+                saveToHistory()
+                createClip(sceneAtTime.id, contextMenu.time, Math.min(contextMenu.time + 8, sceneAtTime.endTime))
+              }
+            },
+            disabled: !sceneAtTime,
+          },
+        ]
+      }
+    }
+  }
+
+  // Render scene boundary indicators on clips track
+  const sceneBoundaryLines = useMemo(() => {
+    return scenes.flatMap((scene: Scene) => [
+      { time: scene.startTime, sceneId: scene.id },
+      { time: scene.endTime, sceneId: scene.id },
+    ])
+  }, [scenes])
 
   return (
-    <div className="flex flex-col h-full bg-black/50 border-t border-white/10">
-      {/* Zoom controls */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10">
+    <div className="flex flex-col h-full bg-black/50">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 flex-shrink-0">
         <span className="text-xs text-white/40">Zoom:</span>
         <input
           type="range"
@@ -296,57 +548,74 @@ export function Timeline({
           <Scissors className="w-3 h-3" />
           Split
         </button>
+        <button
+          onClick={() => setSnapEnabled(!snapEnabled)}
+          className={`ml-2 px-2 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
+            snapEnabled
+              ? 'bg-brand-500/30 text-brand-400 border border-brand-500/50'
+              : 'bg-white/10 hover:bg-white/20'
+          }`}
+          title="Toggle snap to edges"
+        >
+          <Magnet className="w-3 h-3" />
+          Snap
+        </button>
+        <div className="ml-auto text-xs text-white/40 font-mono">
+          {formatTime(currentTime)} / {formatTime(duration)}
+        </div>
       </div>
 
-      {/* Timeline content */}
+      {/* Timeline tracks */}
       <div
         ref={containerRef}
         className="flex-1 overflow-x-auto overflow-y-hidden relative"
         onScroll={handleScroll}
         onClick={handleTimelineClick}
       >
-        <div style={{ width: timelineWidth, minWidth: '100%' }} className="relative">
-          {/* Ruler */}
-          <div className="h-6 border-b border-white/10 relative">
-            {rulerMarks.map((t) => (
-              <div
-                key={t}
-                className="absolute top-0 h-full flex flex-col items-center"
-                style={{ left: t * zoom }}
-              >
-                <div className="w-px h-2 bg-white/30" />
-                <span className="text-[10px] text-white/40 mt-0.5">{formatTime(t)}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Story Track - Scenes */}
-          <div className="h-12 border-b border-white/10 relative bg-white/5">
-            <div className="absolute left-0 top-0 h-full w-16 bg-black/50 flex items-center px-2 z-10 border-r border-white/10">
-              <span className="text-[10px] text-white/40 uppercase">Scenes</span>
+        <div style={{ width: timelineWidth + LABEL_WIDTH, minWidth: '100%' }} className="relative">
+          {/* Ruler - always at top */}
+          <div className="h-6 border-b border-white/10 relative bg-black/30">
+            <div
+              className="absolute left-0 top-0 h-full bg-black/50 flex items-center px-2 z-10 border-r border-white/10"
+              style={{ width: LABEL_WIDTH }}
+            >
+              <span className="text-[10px] text-white/40 uppercase">Time</span>
             </div>
-            <div className="ml-16 h-full relative">
-              {scenes.map((scene: Scene) => (
+            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH }}>
+              {rulerMarks.map((t) => (
                 <div
-                  key={scene.id}
-                  className="absolute top-1 bottom-1 rounded bg-brand-500/30 border border-brand-500/50 flex items-center px-2 overflow-hidden"
-                  style={{
-                    left: scene.startTime * zoom,
-                    width: (scene.endTime - scene.startTime) * zoom,
-                  }}
+                  key={t}
+                  className="absolute top-0 h-full flex flex-col items-center"
+                  style={{ left: t * zoom }}
                 >
-                  <span className="text-xs text-white truncate">{scene.title}</span>
+                  <div className="w-px h-2 bg-white/30" />
+                  <span className="text-[10px] text-white/40 mt-0.5">{formatTime(t)}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Clips Track */}
-          <div className="h-16 border-b border-white/10 relative">
-            <div className="absolute left-0 top-0 h-full w-16 bg-black/50 flex items-center px-2 z-10 border-r border-white/10">
+          {/* Clips Track - top */}
+          <div
+            className="h-14 border-b border-white/10 relative"
+            onContextMenu={(e) => handleContextMenu(e, 'clips')}
+          >
+            <div
+              className="absolute left-0 top-0 h-full bg-black/50 flex items-center px-2 z-10 border-r border-white/10"
+              style={{ width: LABEL_WIDTH }}
+            >
               <span className="text-[10px] text-white/40 uppercase">Clips</span>
             </div>
-            <div className="ml-16 h-full relative">
+            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH }}>
+              {/* Scene boundary indicators */}
+              {sceneBoundaryLines.map((line, i) => (
+                <div
+                  key={`scene-line-${i}`}
+                  className="absolute top-0 bottom-0 w-px bg-brand-500/30 pointer-events-none"
+                  style={{ left: line.time * zoom }}
+                />
+              ))}
+
               {clips.map((clip: Clip) => {
                 const hasVideo = clip.video || videos[`video-${clip.id}`]
                 const isSelected = selectedClipIds.includes(clip.id)
@@ -354,9 +623,13 @@ export function Timeline({
                 const isHoveredEnd = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'end'
                 const isTrimming = trimState?.clipId === clip.id
                 const isDraggingThis = dragState?.clipId === clip.id
-                const isAnyDragging = dragState !== null
+                const isAnyDragging = dragState !== null || trimState !== null
 
-                // Determine cursor based on state
+                // Check for issues
+                const overlappingClips = getOverlappingClips(clip.id, clip.startTime, clip.endTime)
+                const hasOverlap = overlappingClips.length > 0
+                const fitsInScene = clipFitsInScene(clip)
+
                 let cursor = 'cursor-grab'
                 if (isTrimming || isHoveredStart || isHoveredEnd) {
                   cursor = 'cursor-ew-resize'
@@ -370,6 +643,10 @@ export function Timeline({
                     className={`absolute top-1 bottom-1 rounded border flex items-center overflow-hidden transition-colors ${
                       isSelected
                         ? 'bg-brand-500/40 border-brand-500'
+                        : hasOverlap
+                        ? 'bg-red-500/30 border-red-500/50'
+                        : !fitsInScene
+                        ? 'bg-yellow-500/30 border-yellow-500/50'
                         : hasVideo
                         ? 'bg-green-500/30 border-green-500/50 hover:bg-green-500/40'
                         : 'bg-white/10 border-white/20 hover:bg-white/20'
@@ -378,16 +655,23 @@ export function Timeline({
                       left: clip.startTime * zoom,
                       width: Math.max((clip.endTime - clip.startTime) * zoom, 40),
                     }}
+                    title={
+                      hasOverlap
+                        ? `Overlaps with: ${overlappingClips.map(c => c.title).join(', ')}`
+                        : !fitsInScene
+                        ? 'Clip extends beyond scene boundaries'
+                        : clip.title
+                    }
                     onClick={(e) => {
                       if (!hoveredEdge && !dragState) {
                         e.stopPropagation()
-                        // Multi-select with Cmd/Ctrl or Shift
                         const multi = e.metaKey || e.ctrlKey || e.shiftKey
                         onClipSelect?.(clip.id, multi)
                       }
                     }}
+                    onContextMenu={(e) => handleContextMenu(e, 'clips', clip.id)}
                     onMouseMove={(e) => {
-                      if (dragState) return // Don't update edge state while dragging
+                      if (dragState) return
                       const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
                       if (edge) {
                         setHoveredEdge({ clipId: clip.id, edge })
@@ -399,55 +683,111 @@ export function Timeline({
                       if (!dragState) setHoveredEdge(null)
                     }}
                     onMouseDown={(e) => {
+                      if (e.button !== 0) return
                       const edge = getEdgeAtPosition(e.currentTarget, e.clientX)
                       if (edge) {
                         handleTrimStart(clip.id, edge, e)
                       } else {
-                        // Start drag for reordering
                         handleDragStart(clip.id, e)
                       }
                     }}
                   >
                     {/* Start edge handle */}
-                    <div className={`absolute left-0 top-0 bottom-0 w-2 ${isHoveredStart ? 'bg-brand-500/50' : ''}`} />
-                    <span className="text-[10px] text-white truncate px-2">{clip.title}</span>
+                    <div className={`absolute left-0 top-0 bottom-0 w-2 transition-colors ${isHoveredStart ? 'bg-brand-500/50' : ''}`} />
+                    <span className="text-[10px] text-white truncate px-2 flex-1">{clip.title}</span>
+                    {/* Status indicators */}
+                    {hasOverlap && (
+                      <span className="text-[8px] bg-red-500/50 px-1 rounded mr-1">OVL</span>
+                    )}
+                    {!fitsInScene && !hasOverlap && (
+                      <span className="text-[8px] bg-yellow-500/50 px-1 rounded mr-1">OUT</span>
+                    )}
                     {/* End edge handle */}
-                    <div className={`absolute right-0 top-0 bottom-0 w-2 ${isHoveredEnd ? 'bg-brand-500/50' : ''}`} />
+                    <div className={`absolute right-0 top-0 bottom-0 w-2 transition-colors ${isHoveredEnd ? 'bg-brand-500/50' : ''}`} />
                   </div>
                 )
               })}
             </div>
           </div>
 
-          {/* Assets Track - Video thumbnails */}
-          <div className="h-12 border-b border-white/10 relative">
-            <div className="absolute left-0 top-0 h-full w-16 bg-black/50 flex items-center px-2 z-10 border-r border-white/10">
-              <span className="text-[10px] text-white/40 uppercase">Videos</span>
+          {/* Scenes Track */}
+          <div
+            className="h-10 border-b border-white/10 relative bg-white/5"
+            onContextMenu={(e) => handleContextMenu(e, 'scenes')}
+          >
+            <div
+              className="absolute left-0 top-0 h-full bg-black/50 flex items-center px-2 z-10 border-r border-white/10"
+              style={{ width: LABEL_WIDTH }}
+            >
+              <span className="text-[10px] text-white/40 uppercase">Scenes</span>
             </div>
-            <div className="ml-16 h-full relative">
-              {clips.map((clip: Clip) => {
-                const video = clip.video || videos[`video-${clip.id}`]
-                if (!video) return null
+            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH }}>
+              {scenes.map((scene: Scene) => {
+                const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
+                const hasClipsOutside = sceneClips.some((c: Clip) =>
+                  c.startTime < scene.startTime || c.endTime > scene.endTime
+                )
+
                 return (
                   <div
-                    key={clip.id}
-                    className="absolute top-1 bottom-1 rounded bg-purple-500/30 border border-purple-500/50 flex items-center justify-center overflow-hidden"
+                    key={scene.id}
+                    className={`absolute top-1 bottom-1 rounded border flex items-center px-2 overflow-hidden cursor-pointer transition-colors ${
+                      hasClipsOutside
+                        ? 'bg-yellow-500/20 border-yellow-500/50 hover:bg-yellow-500/30'
+                        : 'bg-brand-500/30 border-brand-500/50 hover:bg-brand-500/40'
+                    }`}
                     style={{
-                      left: clip.startTime * zoom,
-                      width: Math.max((clip.endTime - clip.startTime) * zoom, 40),
+                      left: scene.startTime * zoom,
+                      width: (scene.endTime - scene.startTime) * zoom,
                     }}
+                    title={hasClipsOutside ? 'Some clips extend beyond this scene' : scene.title}
+                    onContextMenu={(e) => handleContextMenu(e, 'scenes', scene.id)}
                   >
-                    <span className="text-[10px] text-white/60">VID</span>
+                    <span className="text-xs text-white truncate">{scene.title}</span>
+                    {sceneClips.length > 0 && (
+                      <span className="ml-auto text-[10px] text-white/50">{sceneClips.length}</span>
+                    )}
                   </div>
                 )
               })}
             </div>
           </div>
+
+          {/* Transcript Track */}
+          {transcript.length > 0 && (
+            <TranscriptTrack
+              segments={transcript}
+              zoom={zoom}
+              labelWidth={LABEL_WIDTH}
+              duration={duration}
+              onSeek={onSeek}
+            />
+          )}
+
+          {/* Waveform Track - at bottom */}
+          {audioUrl && (
+            <WaveformTrack
+              audioUrl={audioUrl}
+              duration={duration}
+              zoom={zoom}
+              currentTime={currentTime}
+              onSeek={onSeek}
+              labelWidth={LABEL_WIDTH}
+            />
+          )}
+
+          {/* Snap indicator line */}
+          {activeSnapPoint !== null && (
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-green-400 z-30 pointer-events-none"
+              style={{ left: activeSnapPoint * zoom + LABEL_WIDTH }}
+            />
+          )}
 
           {/* Playhead */}
           <div
             className="absolute top-0 bottom-0 w-0.5 bg-brand-500 z-20 cursor-ew-resize"
-            style={{ left: currentTime * zoom }}
+            style={{ left: currentTime * zoom + LABEL_WIDTH }}
             onMouseDown={(e) => {
               e.stopPropagation()
               setIsDragging(true)
@@ -457,6 +797,14 @@ export function Timeline({
           </div>
         </div>
       </div>
+
+      {/* Context Menu */}
+      <ContextMenu
+        isOpen={contextMenu !== null}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : { x: 0, y: 0 }}
+        items={getContextMenuItems()}
+        onClose={() => setContextMenu(null)}
+      />
     </div>
   )
 }

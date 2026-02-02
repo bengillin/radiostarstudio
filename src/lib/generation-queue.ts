@@ -3,7 +3,7 @@ import type { QueueItem, Scene, Frame, GeneratedVideo } from '@/types'
 interface ProcessorCallbacks {
   getState: () => {
     generationQueue: { items: QueueItem[]; isProcessing: boolean; isPaused: boolean }
-    clips: Array<{ id: string; sceneId: string; title: string }>
+    clips: Array<{ id: string; sceneId: string; title: string; startTime: number; endTime: number }>
     scenes: Scene[]
     frames: Record<string, Frame>
     globalStyle: string
@@ -108,6 +108,9 @@ async function generateVideo(
     'Smooth cinematic motion',
   ].filter(Boolean).join('. ')
 
+  // Calculate clip duration for Veo
+  const clipDuration = clip.endTime - clip.startTime
+
   const response = await fetch('/api/generate-video', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,6 +129,7 @@ async function generateVideo(
       } : undefined,
       globalStyle: state.globalStyle,
       model: state.modelSettings.video,
+      clipDuration, // Pass duration so API can choose appropriate Veo duration
     }),
   })
 

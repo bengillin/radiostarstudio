@@ -25,6 +25,11 @@ import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/ty
 
 type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
 
+// Veo 3.1 video duration constraints
+const VEO_DURATIONS = [4, 6, 8] as const
+const VEO_MAX_DURATION = 8 // seconds
+const VEO_DEFAULT_DURATION = 8 // Use max for best quality
+
 const STEPS: { id: Step; label: string; icon: typeof Music }[] = [
   { id: 'upload', label: 'Audio', icon: Upload },
   { id: 'transcribe', label: 'Transcribe', icon: Music },
@@ -108,7 +113,7 @@ function StudioPageContent() {
   const [showCreateClipForm, setShowCreateClipForm] = useState(false)
   const [newClipSceneId, setNewClipSceneId] = useState<string>('')
   const [newClipStart, setNewClipStart] = useState(0)
-  const [newClipEnd, setNewClipEnd] = useState(5)
+  const [newClipEnd, setNewClipEnd] = useState(VEO_MAX_DURATION)
   const [newClipTitle, setNewClipTitle] = useState('')
 
   // Check if any clips have videos generated
@@ -272,7 +277,7 @@ function StudioPageContent() {
               )
               if (sceneAtPlayhead) {
                 saveToHistory()
-                createClip(sceneAtPlayhead.id, currentTime, Math.min(currentTime + 5, sceneAtPlayhead.endTime))
+                createClip(sceneAtPlayhead.id, currentTime, Math.min(currentTime + VEO_MAX_DURATION, sceneAtPlayhead.endTime))
                 showToast('Clip created', 'success')
               } else {
                 showToast('No scene at playhead position', 'error')
@@ -851,7 +856,7 @@ function StudioPageContent() {
                                         const newStart = sceneClips.length > 0
                                           ? sceneClips[sceneClips.length - 1].endTime
                                           : scene.startTime
-                                        const newEnd = Math.min(newStart + 5, scene.endTime)
+                                        const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
                                         if (newEnd > newStart) {
                                           createClip(scene.id, newStart, newEnd)
                                           showToast('Clip created', 'success')
@@ -885,9 +890,27 @@ function StudioPageContent() {
                                         >
                                           <div className="flex items-center justify-between mb-1">
                                             <span className="text-white/70 truncate font-medium">{clip.title}</span>
-                                            <span className="text-white/40 flex-shrink-0 ml-2">
-                                              {formatTime(clip.startTime)}
-                                            </span>
+                                            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                                              {(() => {
+                                                const duration = clip.endTime - clip.startTime
+                                                const needsMultipleVideos = duration > VEO_MAX_DURATION
+                                                return (
+                                                  <span
+                                                    className={`text-[10px] px-1 rounded ${
+                                                      needsMultipleVideos
+                                                        ? 'bg-yellow-500/20 text-yellow-400'
+                                                        : 'bg-white/10 text-white/50'
+                                                    }`}
+                                                    title={needsMultipleVideos ? `Clip is ${duration.toFixed(1)}s - will need multiple ${VEO_MAX_DURATION}s videos` : `${duration.toFixed(1)}s clip`}
+                                                  >
+                                                    {duration.toFixed(1)}s
+                                                  </span>
+                                                )
+                                              })()}
+                                              <span className="text-white/40">
+                                                {formatTime(clip.startTime)}
+                                              </span>
+                                            </div>
                                           </div>
                                           {/* Frame thumbnails */}
                                           {(startFrame || endFrame) && (

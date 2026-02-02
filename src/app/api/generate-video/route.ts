@@ -3,11 +3,23 @@ import { GoogleGenAI } from '@google/genai'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
+// Veo 3.1 supported durations
+const VEO_DURATIONS = [4, 6, 8] as const
+type VeoDuration = typeof VEO_DURATIONS[number]
+
 // Helper to extract base64 and mime type from data URL
 function parseDataUrl(dataUrl: string): { mimeType: string; imageBytes: string } | null {
   const match = dataUrl.match(/^data:(.+);base64,(.+)$/)
   if (!match) return null
   return { mimeType: match[1], imageBytes: match[2] }
+}
+
+// Get the best Veo duration for a clip (closest supported duration that fits)
+function getVeoDuration(clipDuration?: number): VeoDuration {
+  if (!clipDuration || clipDuration >= 8) return 8
+  if (clipDuration >= 6) return 8
+  if (clipDuration >= 4) return 6
+  return 4
 }
 
 export async function POST(request: NextRequest) {
@@ -23,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, globalStyle, model } = body
+    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, globalStyle, model, clipDuration } = body
 
     if (!clipId || !startFrameUrl) {
       return NextResponse.json(
@@ -75,12 +87,14 @@ Visual style: ${globalStyle || 'cinematic, high quality'}
 
 ${interpolationNote}`
 
-    console.log('[generate-video] Calling Veo API with model:', videoModel)
+    // Determine video duration based on clip length
+    const videoDuration = getVeoDuration(clipDuration)
+    console.log('[generate-video] Calling Veo API with model:', videoModel, 'duration:', videoDuration + 's')
 
     // Build config - add lastFrame for interpolation if end frame is available
     const config: Record<string, unknown> = {
       numberOfVideos: 1,
-      durationSeconds: 8,
+      durationSeconds: videoDuration,
       aspectRatio: '16:9',
       personGeneration: 'allow_adult',
       resolution: '720p',
@@ -168,7 +182,7 @@ ${interpolationNote}`
         id: `video-${clipId}-${Date.now()}`,
         clipId,
         url: videoDataUrl,
-        duration: 8,
+        duration: videoDuration,
         status: 'complete',
         startFrameId: `frame-${clipId}-start`,
         endFrameId: endFrame ? `frame-${clipId}-end` : undefined,

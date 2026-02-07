@@ -3,7 +3,7 @@ import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementRefe
 interface ProcessorCallbacks {
   getState: () => {
     generationQueue: { items: QueueItem[]; isProcessing: boolean; isPaused: boolean }
-    clips: Array<{ id: string; sceneId: string; title: string; startTime: number; endTime: number }>
+    clips: Array<{ id: string; sceneId?: string; title: string; startTime: number; endTime: number }>
     scenes: Scene[]
     frames: Record<string, Frame>
     globalStyle: string
@@ -34,14 +34,14 @@ async function generateFrame(
 ): Promise<Frame> {
   const state = callbacks.getState()
   const clip = state.clips.find(c => c.id === clipId)
-  const scene = state.scenes.find(s => s.id === clip?.sceneId)
+  const scene = clip?.sceneId ? state.scenes.find(s => s.id === clip.sceneId) : undefined
 
-  if (!clip || !scene) {
-    throw new Error('Clip or scene not found')
+  if (!clip) {
+    throw new Error('Clip not found')
   }
 
-  // Resolve elements for this scene
-  const resolvedElements = callbacks.getResolvedElementsForScene(scene.id)
+  // Resolve elements for this scene (if scene exists)
+  const resolvedElements = scene ? callbacks.getResolvedElementsForScene(scene.id) : []
 
   // Use custom prompt if provided, otherwise build from resolved elements
   let prompt: string
@@ -62,8 +62,8 @@ async function generateFrame(
       frameType === 'end' && 'This is the ending frame of the scene.',
     ].filter(Boolean).join('. ')
     prompt = parts || `A cinematic frame for "${clip.title}"`
-  } else {
-    // Legacy fallback
+  } else if (scene) {
+    // Legacy fallback with scene data
     const parts = [
       scene.where && `Setting: ${scene.where}`,
       scene.when && `Time: ${scene.when}`,
@@ -72,6 +72,13 @@ async function generateFrame(
       scene.why && `Mood: ${scene.why}`,
       state.globalStyle && `Style: ${state.globalStyle}`,
       frameType === 'end' && 'This is the ending frame of the scene.',
+    ].filter(Boolean).join('. ')
+    prompt = parts || `A cinematic frame for "${clip.title}"`
+  } else {
+    // No scene — build minimal prompt from clip info + global style
+    const parts = [
+      state.globalStyle && `Style: ${state.globalStyle}`,
+      frameType === 'end' && 'This is the ending frame.',
     ].filter(Boolean).join('. ')
     prompt = parts || `A cinematic frame for "${clip.title}"`
   }
@@ -101,14 +108,14 @@ async function generateFrame(
       prompt,
       clipId,
       type: frameType,
-      scene: {
+      scene: scene ? {
         title: scene.title,
         who: scene.who,
         what: scene.what,
         when: scene.when,
         where: scene.where,
         why: scene.why,
-      },
+      } : null,
       elements: elementContext,
       referenceImages,
       globalStyle: state.globalStyle,
@@ -132,7 +139,7 @@ async function generateVideo(
 ): Promise<GeneratedVideo> {
   const state = callbacks.getState()
   const clip = state.clips.find(c => c.id === clipId)
-  const scene = state.scenes.find(s => s.id === clip?.sceneId)
+  const scene = clip?.sceneId ? state.scenes.find(s => s.id === clip.sceneId) : undefined
 
   if (!clip) {
     throw new Error('Clip not found')

@@ -19,7 +19,11 @@ const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: typeof Use
 
 const CATEGORIES: ElementCategory[] = ['who', 'what', 'when', 'where', 'why']
 
-export function ElementsPanel() {
+interface ElementsPanelProps {
+  onSelectElement?: (id: string) => void
+}
+
+export function ElementsPanel({ onSelectElement }: ElementsPanelProps = {}) {
   const {
     elements, scenes, elementImages,
     addElement, updateElement, deleteElement,
@@ -136,7 +140,10 @@ export function ElementsPanel() {
                 {/* Header */}
                 <div
                   className="p-2.5 cursor-pointer hover:bg-white/5 transition-colors flex items-center gap-2 group"
-                  onClick={() => setExpandedId(isExpanded ? null : element.id)}
+                  onClick={() => {
+                    setExpandedId(isExpanded ? null : element.id)
+                    if (!isExpanded) onSelectElement?.(element.id)
+                  }}
                 >
                   <Icon className={`w-3.5 h-3.5 ${config.color} flex-shrink-0`} />
                   {images.length > 0 && (

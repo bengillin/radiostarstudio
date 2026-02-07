@@ -20,8 +20,10 @@ import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { ElementsPanel } from '@/components/studio/ElementsPanel'
 import { LyricsPanel } from '@/components/studio/LyricsPanel'
+import { LyricsNavigator } from '@/components/studio/LyricsNavigator'
 import { StoryboardView } from '@/components/studio/StoryboardView'
 import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
+import { WorldElementDetailView } from '@/components/studio/WorldElementDetail'
 import { useWorkflowAutomation } from '@/hooks/useWorkflowAutomation'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
@@ -113,9 +115,10 @@ function StudioPageContent() {
   const [showQueueModal, setShowQueueModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
-  const [centerView, setCenterView] = useState<'preview' | 'storyboard'>('preview')
+  const [scenesSubView, setScenesSubView] = useState<'preview' | 'storyboard'>('preview')
   const [isDetectingBeats, setIsDetectingBeats] = useState(false)
   const [leftPanelTab, setLeftPanelTab] = useState<'lyrics' | 'scenes' | 'world'>('scenes')
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null)
 
   // Scene/Clip management state
   const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
@@ -319,7 +322,7 @@ function StudioPageContent() {
               )
               if (sceneAtPlayhead) {
                 saveToHistory()
-                createClip(sceneAtPlayhead.id, currentTime, Math.min(currentTime + VEO_MAX_DURATION, sceneAtPlayhead.endTime))
+                createClip(currentTime, Math.min(currentTime + VEO_MAX_DURATION, sceneAtPlayhead.endTime), undefined, sceneAtPlayhead.id)
                 showToast('Clip created', 'success')
               } else {
                 showToast('No scene at playhead position', 'error')
@@ -354,10 +357,10 @@ function StudioPageContent() {
           }
           break
         case 'KeyB':
-          // B = toggle storyboard view
+          // B = toggle storyboard view (only when on scenes tab)
           if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            setCenterView(v => v === 'storyboard' ? 'preview' : 'storyboard')
+            setScenesSubView(v => v === 'storyboard' ? 'preview' : 'storyboard')
           }
           break
       }
@@ -369,42 +372,45 @@ function StudioPageContent() {
 
   // Get selected clip and its scene
   const selectedClip = clips.find((c: Clip) => c.id === selectedClipId)
-  const selectedScene = selectedClip ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
+  const selectedScene = selectedClip?.sceneId ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
   const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
 
   // Auto-fill frame prompt when clip is selected
   useEffect(() => {
-    if (!selectedClip || !selectedScene) {
-      return
-    }
+    if (!selectedClip) return
 
     // Find the transcript segment for this clip
-    const segment = transcript.find((s: TranscriptSegment) => s.id === selectedClip.segmentId)
+    const segment = selectedClip.segmentId
+      ? transcript.find((s: TranscriptSegment) => s.id === selectedClip.segmentId)
+      : undefined
     const clipText = segment?.text || selectedClip.title
 
-    // Build prompt from resolved elements
-    const resolvedElements = getResolvedElementsForScene(selectedScene.id)
     const parts: string[] = []
 
-    if (resolvedElements.length > 0) {
-      // Group by category
-      const byCategory: Record<string, typeof resolvedElements> = {}
-      for (const el of resolvedElements) {
-        ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
-      }
+    if (selectedScene) {
+      // Build prompt from resolved elements
+      const resolvedElements = getResolvedElementsForScene(selectedScene.id)
 
-      if (byCategory.where) parts.push(`Setting: ${byCategory.where.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
-      if (byCategory.when) parts.push(`Time: ${byCategory.when.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
-      if (byCategory.who) parts.push(`Featuring: ${byCategory.who.map(e => e.name).join(', ')}`)
-      if (byCategory.what) parts.push(`Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
-      if (byCategory.why) parts.push(`Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
-    } else {
-      // Fallback to legacy fields
-      if (selectedScene.where) parts.push(`Setting: ${selectedScene.where}`)
-      if (selectedScene.when) parts.push(`Time: ${selectedScene.when}`)
-      if (selectedScene.who?.length) parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
-      if (selectedScene.what) parts.push(`Action: ${selectedScene.what}`)
-      if (selectedScene.why) parts.push(`Mood: ${selectedScene.why}`)
+      if (resolvedElements.length > 0) {
+        // Group by category
+        const byCategory: Record<string, typeof resolvedElements> = {}
+        for (const el of resolvedElements) {
+          ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
+        }
+
+        if (byCategory.where) parts.push(`Setting: ${byCategory.where.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+        if (byCategory.when) parts.push(`Time: ${byCategory.when.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+        if (byCategory.who) parts.push(`Featuring: ${byCategory.who.map(e => e.name).join(', ')}`)
+        if (byCategory.what) parts.push(`Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+        if (byCategory.why) parts.push(`Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+      } else {
+        // Fallback to legacy fields
+        if (selectedScene.where) parts.push(`Setting: ${selectedScene.where}`)
+        if (selectedScene.when) parts.push(`Time: ${selectedScene.when}`)
+        if (selectedScene.who?.length) parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
+        if (selectedScene.what) parts.push(`Action: ${selectedScene.what}`)
+        if (selectedScene.why) parts.push(`Mood: ${selectedScene.why}`)
+      }
     }
 
     // Add the clip's specific content
@@ -529,9 +535,9 @@ function StudioPageContent() {
             {/* Tab content */}
             <div className="flex-1 overflow-y-auto p-4">
               {leftPanelTab === 'world' ? (
-                <ElementsPanel />
+                <ElementsPanel onSelectElement={(id) => setSelectedElementId(id)} />
               ) : leftPanelTab === 'lyrics' ? (
-                <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
+                <LyricsNavigator onSeek={handleSeek} currentTime={currentTime} />
               ) : (
                 <div className="space-y-2">
                   {/* Add scene button */}
@@ -627,7 +633,7 @@ function StudioPageContent() {
                                         : scene.startTime
                                       const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
                                       if (newEnd > newStart) {
-                                        createClip(scene.id, newStart, newEnd)
+                                        createClip(newStart, newEnd, undefined, scene.id)
                                         showToast('Clip created', 'success')
                                       } else {
                                         showToast('No room for new clip in scene', 'error')
@@ -707,16 +713,16 @@ function StudioPageContent() {
 
           </aside>
 
-          {/* Center - Preview / Storyboard */}
+          {/* Center - Tab-driven workspace */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            {/* View toggle header */}
-            {clips.length > 0 && (
+            {/* View toggle header — only for scenes tab */}
+            {leftPanelTab === 'scenes' && clips.length > 0 && !selectedClip && (
               <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setCenterView('preview')}
+                    onClick={() => setScenesSubView('preview')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                      centerView === 'preview'
+                      scenesSubView === 'preview'
                         ? 'bg-white/10 text-white'
                         : 'text-white/40 hover:text-white/60'
                     }`}
@@ -725,9 +731,9 @@ function StudioPageContent() {
                     Preview
                   </button>
                   <button
-                    onClick={() => setCenterView('storyboard')}
+                    onClick={() => setScenesSubView('storyboard')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                      centerView === 'storyboard'
+                      scenesSubView === 'storyboard'
                         ? 'bg-white/10 text-white'
                         : 'text-white/40 hover:text-white/60'
                     }`}
@@ -740,26 +746,14 @@ function StudioPageContent() {
               </div>
             )}
 
-            {/* Preview area, Detail Panel, or Storyboard */}
+            {/* Center content — priority: clip selected → detail, then tab-driven */}
             <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-              {centerView === 'storyboard' && clips.length > 0 ? (
-                <div className="w-full h-full">
-                  <StoryboardView
-                    clips={clips}
-                    scenes={scenes}
-                    frames={frames}
-                    selectedClipIds={selectedClipIds}
-                    onSelectClip={(clipId) => {
-                      selectClip(clipId)
-                      setCenterView('preview')
-                    }}
-                  />
-                </div>
-              ) : selectedClip && selectedScene ? (
+              {selectedClip ? (
+                /* Clip selected — always show DetailPanel regardless of tab */
                 <div className="w-full h-full max-w-4xl">
                   <DetailPanel
                     clip={selectedClip}
-                    scene={selectedScene}
+                    scene={selectedScene ?? undefined}
                     onClose={() => clearSelection()}
                     framePrompt={framePrompt}
                     setFramePrompt={setFramePrompt}
@@ -767,49 +761,86 @@ function StudioPageContent() {
                     setMotionPrompt={setMotionPrompt}
                   />
                 </div>
-              ) : (
-                <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
-                  {!audioFile ? (
-                    <label
-                      className={`w-full h-full flex flex-col items-center justify-center cursor-pointer transition-colors rounded-xl ${
-                        isDraggingAudio ? 'bg-brand-500/10' : 'hover:bg-white/5'
-                      }`}
-                      onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
-                      onDragLeave={() => setIsDraggingAudio(false)}
-                      onDrop={handleAudioDrop}
-                    >
-                      <input
-                        type="file"
-                        accept="audio/*"
-                        className="hidden"
-                        onChange={handleAudioFileSelect}
-                      />
-                      {isLoadingAudio ? (
-                        <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
-                      ) : (
-                        <Music className="w-12 h-12 text-white/20 mb-4" />
-                      )}
-                      <p className="text-lg text-white/60 font-medium">
-                        {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
-                      </p>
-                      <p className="text-sm text-white/30 mt-2">
-                        or click to browse
-                      </p>
-                    </label>
-                  ) : transcript.length > 0 ? (
-                    <div className="text-center p-8">
-                      <p className="text-white/60 mb-2">
-                        {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
-                      </p>
-                      <p className="text-sm text-white/30">
-                        Click a clip in the timeline to edit
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-white/30">Transcribe audio to begin</p>
-                  )}
+              ) : leftPanelTab === 'lyrics' ? (
+                /* Lyrics tab — full-width writing workspace */
+                <div className="w-full h-full max-w-2xl mx-auto overflow-y-auto">
+                  <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
                 </div>
-              )}
+              ) : leftPanelTab === 'scenes' ? (
+                /* Scenes tab — preview or storyboard */
+                scenesSubView === 'storyboard' && clips.length > 0 ? (
+                  <div className="w-full h-full">
+                    <StoryboardView
+                      clips={clips}
+                      scenes={scenes}
+                      frames={frames}
+                      selectedClipIds={selectedClipIds}
+                      onSelectClip={(clipId) => {
+                        selectClip(clipId)
+                        setScenesSubView('preview')
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
+                    {!audioFile ? (
+                      <label
+                        className={`w-full h-full flex flex-col items-center justify-center cursor-pointer transition-colors rounded-xl ${
+                          isDraggingAudio ? 'bg-brand-500/10' : 'hover:bg-white/5'
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+                        onDragLeave={() => setIsDraggingAudio(false)}
+                        onDrop={handleAudioDrop}
+                      >
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          className="hidden"
+                          onChange={handleAudioFileSelect}
+                        />
+                        {isLoadingAudio ? (
+                          <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
+                        ) : (
+                          <Music className="w-12 h-12 text-white/20 mb-4" />
+                        )}
+                        <p className="text-lg text-white/60 font-medium">
+                          {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
+                        </p>
+                        <p className="text-sm text-white/30 mt-2">
+                          or click to browse
+                        </p>
+                      </label>
+                    ) : transcript.length > 0 ? (
+                      <div className="text-center p-8">
+                        <p className="text-white/60 mb-2">
+                          {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
+                        </p>
+                        <p className="text-sm text-white/30">
+                          Click a clip in the timeline to edit
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-white/30">Transcribe audio to begin</p>
+                    )}
+                  </div>
+                )
+              ) : leftPanelTab === 'world' ? (
+                /* World tab — element detail or empty state */
+                selectedElementId && elements.find(e => e.id === selectedElementId) ? (
+                  <div className="w-full h-full max-w-2xl mx-auto overflow-y-auto">
+                    <WorldElementDetailView
+                      elementId={selectedElementId}
+                      onClose={() => setSelectedElementId(null)}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <MapPin className="w-12 h-12 text-white/10 mx-auto mb-4" />
+                    <p className="text-white/40">Select an element from the sidebar</p>
+                    <p className="text-sm text-white/25 mt-1">or create a new one</p>
+                  </div>
+                )
+              ) : null}
             </div>
           </div>
 
@@ -963,7 +994,7 @@ function StudioPageContent() {
                                 const start = sceneBeats[i]
                                 const end = sceneBeats[i + 1]
                                 if (end - start >= 0.5) {
-                                  createClip(scene.id, start, end)
+                                  createClip(start, end, undefined, scene.id)
                                   created++
                                 }
                               }
@@ -1417,7 +1448,7 @@ function StudioPageContent() {
         title="Delete Scene"
         message={
           sceneToDelete?.clipCount
-            ? `This scene contains ${sceneToDelete.clipCount} clip${sceneToDelete.clipCount > 1 ? 's' : ''}. Deleting the scene will also delete all its clips and any generated frames/videos.`
+            ? `This scene contains ${sceneToDelete.clipCount} clip${sceneToDelete.clipCount > 1 ? 's' : ''}. They will become free-floating (unassociated with any scene).`
             : 'Are you sure you want to delete this scene?'
         }
         confirmLabel="Delete"

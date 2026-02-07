@@ -13,7 +13,7 @@ import type { Clip, Scene, Frame, GeneratedVideo } from '@/types'
 
 interface DetailPanelProps {
   clip: Clip
-  scene: Scene
+  scene?: Scene
   onClose: () => void
   framePrompt: string
   setFramePrompt: (prompt: string) => void
@@ -65,7 +65,7 @@ export function DetailPanel({
     setVariationState({ isOpen: true, isLoading: true, frameType, variations: [] })
 
     try {
-      const resolvedElements = getResolvedElementsForScene(scene.id)
+      const resolvedElements = scene ? getResolvedElementsForScene(scene.id) : []
       const elementsPayload = resolvedElements.map(e => ({
         category: e.category,
         name: e.name,
@@ -83,7 +83,7 @@ export function DetailPanel({
             prompt: framePrompt || `Cinematic ${frameType} frame`,
             clipId: clip.id,
             type: frameType,
-            scene: { title: scene.title },
+            scene: scene ? { title: scene.title } : null,
             elements: elementsPayload,
             globalStyle,
             model: modelSettings.image,
@@ -114,7 +114,7 @@ export function DetailPanel({
               prompt: (framePrompt || `Cinematic ${frameType} frame`) + suffix,
               clipId: clip.id,
               type: frameType,
-              scene: { title: scene.title },
+              scene: scene ? { title: scene.title } : null,
               elements: elementsPayload,
               globalStyle,
               model: modelSettings.image,
@@ -178,7 +178,7 @@ export function DetailPanel({
         <div>
           <h2 className="font-semibold text-white">{clip.title}</h2>
           <p className="text-xs text-white/50">
-            {formatTime(clip.startTime)} - {formatTime(clip.endTime)} · Scene: {scene.title}
+            {formatTime(clip.startTime)} - {formatTime(clip.endTime)}{scene ? ` · Scene: ${scene.title}` : ''}
           </p>
         </div>
         <button
@@ -561,19 +561,21 @@ export function DetailPanel({
             </div>
 
             {/* Scene Properties */}
-            <div className="pt-4 border-t border-white/10">
-              <h3 className="text-sm font-medium mb-3">Scene: {scene.title}</h3>
+            {scene && (
+              <div className="pt-4 border-t border-white/10">
+                <h3 className="text-sm font-medium mb-3">Scene: {scene.title}</h3>
 
-              <div className="space-y-3">
-                {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
-                  <SceneElementSelector
-                    key={category}
-                    sceneId={scene.id}
-                    category={category}
-                  />
-                ))}
+                <div className="space-y-3">
+                  {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
+                    <SceneElementSelector
+                      key={category}
+                      sceneId={scene.id}
+                      category={category}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>

@@ -64,7 +64,7 @@ interface ProjectStore {
   deleteClip: (id: string) => void
 
   // Enhanced clip management
-  createClip: (sceneId: string, startTime: number, endTime: number, title?: string) => string  // Returns new clip ID
+  createClip: (startTime: number, endTime: number, title?: string, sceneId?: string) => string  // Returns new clip ID
   handleClipMoved: (clipId: string, newStartTime: number, newEndTime: number) => void
   getClipsForScene: (sceneId: string) => Clip[]
 
@@ -222,7 +222,7 @@ export const useProjectStore = create<ProjectStore>()(
       deleteSegment: (id) => set((state) => ({
         transcript: state.transcript.filter((s) => s.id !== id),
         clips: state.clips.map((c) =>
-          c.segmentId === id ? { ...c, segmentId: '' } : c
+          c.segmentId === id ? { ...c, segmentId: undefined } : c
         ),
       })),
 
@@ -322,8 +322,10 @@ export const useProjectStore = create<ProjectStore>()(
               c.sceneId === id ? { ...c, sceneId: reassignToSceneId } : c
             )
           } else {
-            // Delete the clips (and their frames/videos remain orphaned in cache)
-            updatedClips = clips.filter(c => c.sceneId !== id)
+            // Orphan clips — clear sceneId so they become free-floating
+            updatedClips = clips.map(c =>
+              c.sceneId === id ? { ...c, sceneId: undefined } : c
+            )
           }
         }
 
@@ -368,20 +370,25 @@ export const useProjectStore = create<ProjectStore>()(
       })),
 
       // Enhanced clip management
-      createClip: (sceneId, startTime, endTime, title) => {
-        const { clips, scenes } = get()
-        const scene = scenes.find(s => s.id === sceneId)
-        const sceneClips = clips.filter(c => c.sceneId === sceneId)
+      createClip: (startTime, endTime, title, sceneId) => {
+        const { clips, scenes, transcript } = get()
         const newClipId = `clip-${Date.now()}`
 
+        // Auto-detect scene from time overlap if not provided
+        const midpoint = (startTime + endTime) / 2
+        const resolvedSceneId = sceneId || scenes.find(s => midpoint >= s.startTime && midpoint < s.endTime)?.id
+        // Auto-detect segment from time overlap
+        const resolvedSegmentId = transcript.find(s => midpoint >= s.start && midpoint < s.end)?.id
+
+        const existingClips = resolvedSceneId ? clips.filter(c => c.sceneId === resolvedSceneId) : clips
         const newClip: Clip = {
           id: newClipId,
-          sceneId,
-          segmentId: '', // No transcript segment for manually created clips
-          title: title || `Clip ${sceneClips.length + 1}`,
+          sceneId: resolvedSceneId,
+          segmentId: resolvedSegmentId,
+          title: title || `Clip ${existingClips.length + 1}`,
           startTime,
           endTime,
-          order: sceneClips.length,
+          order: existingClips.length,
         }
 
         set((state) => ({ clips: [...state.clips, newClip] }))
@@ -389,65 +396,33 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       handleClipMoved: (clipId, newStartTime, newEndTime) => {
-        const { scenes, clips, audioFile } = get()
+        const { scenes, clips, transcript } = get()
         const clip = clips.find(c => c.id === clipId)
         if (!clip) return
 
         const clipMidpoint = (newStartTime + newEndTime) / 2
 
-        // Find scene that contains the clip's midpoint
-        let targetScene = scenes.find(s =>
+        // Auto-associate with overlapping scene/segment (or clear if none)
+        const targetScene = scenes.find(s =>
           clipMidpoint >= s.startTime && clipMidpoint < s.endTime
         )
+        const targetSegment = transcript.find(s =>
+          clipMidpoint >= s.start && clipMidpoint < s.end
+        )
 
-        if (!targetScene) {
-          // No scene contains this position - create a new one
-          const audioDuration = audioFile?.duration ?? 180
-          const newSceneId = `scene-${Date.now()}`
+        const updatedClips = clips.map(c =>
+          c.id === clipId
+            ? {
+                ...c,
+                startTime: newStartTime,
+                endTime: newEndTime,
+                sceneId: targetScene?.id,
+                segmentId: targetSegment?.id,
+              }
+            : c
+        )
 
-          // Find the best position for new scene
-          const newScene: Scene = {
-            id: newSceneId,
-            title: `Scene ${scenes.length + 1}`,
-            description: '',
-            startTime: newStartTime,
-            endTime: Math.min(newEndTime, audioDuration),
-            clips: [],
-            order: scenes.length,
-            who: [],
-            what: '',
-            when: '',
-            where: '',
-            why: '',
-            aesthetic: {
-              style: '',
-              colorPalette: [],
-              lighting: '',
-              cameraMovement: '',
-            },
-          }
-
-          // Add new scene and update clip
-          const newScenes = [...scenes, newScene].sort((a, b) => a.startTime - b.startTime)
-          newScenes.forEach((s, i) => { s.order = i })
-
-          const updatedClips = clips.map(c =>
-            c.id === clipId
-              ? { ...c, sceneId: newSceneId, startTime: newStartTime, endTime: newEndTime }
-              : c
-          )
-
-          set({ scenes: newScenes, clips: updatedClips })
-        } else {
-          // Update clip with new times and potentially new scene
-          const updatedClips = clips.map(c =>
-            c.id === clipId
-              ? { ...c, sceneId: targetScene!.id, startTime: newStartTime, endTime: newEndTime }
-              : c
-          )
-
-          set({ clips: updatedClips })
-        }
+        set({ clips: updatedClips })
       },
 
       getClipsForScene: (sceneId) => {

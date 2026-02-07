@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Trash2, ChevronDown, Music } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, Music, Clock } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { getSegmentColor, SEGMENT_TYPES } from '@/lib/segment-colors'
 import { formatTime } from '@/lib/utils'
@@ -102,9 +102,13 @@ interface SegmentBlockProps {
 function SegmentBlock({ segment, isActive, onSeek, onUpdate, onDelete }: SegmentBlockProps) {
   const [localText, setLocalText] = useState(segment.text)
   const [showTypePicker, setShowTypePicker] = useState(false)
+  const [showTimeEdit, setShowTimeEdit] = useState(false)
+  const [editStart, setEditStart] = useState('')
+  const [editEnd, setEditEnd] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const timeEditRef = useRef<HTMLDivElement>(null)
 
   // Sync external changes
   useEffect(() => {
@@ -130,6 +134,18 @@ function SegmentBlock({ segment, isActive, onSeek, onUpdate, onDelete }: Segment
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [showTypePicker])
+
+  // Close time editor on outside click
+  useEffect(() => {
+    if (!showTimeEdit) return
+    const handleClick = (e: MouseEvent) => {
+      if (timeEditRef.current && !timeEditRef.current.contains(e.target as Node)) {
+        setShowTimeEdit(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showTimeEdit])
 
   const handleTextChange = useCallback((value: string) => {
     setLocalText(value)
@@ -186,14 +202,79 @@ function SegmentBlock({ segment, isActive, onSeek, onUpdate, onDelete }: Segment
           )}
         </div>
 
-        {/* Time badge */}
-        <button
-          onClick={() => onSeek(segment.start)}
-          className="text-[11px] text-white/30 hover:text-white/50 transition-colors font-mono"
-          title="Seek to section start"
-        >
-          {formatTime(segment.start)} – {formatTime(segment.end)}
-        </button>
+        {/* Time badge / editor */}
+        <div className="relative" ref={timeEditRef}>
+          {showTimeEdit ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                value={editStart}
+                onChange={(e) => setEditStart(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const s = parseFloat(editStart)
+                    const en = parseFloat(editEnd)
+                    if (!isNaN(s) && !isNaN(en) && s < en && s >= 0) {
+                      onUpdate({ start: s, end: en })
+                    }
+                    setShowTimeEdit(false)
+                  } else if (e.key === 'Escape') {
+                    setShowTimeEdit(false)
+                  }
+                }}
+                className="w-14 px-1 py-0.5 text-[11px] font-mono bg-white/10 border border-white/20 rounded text-white text-center focus:outline-none focus:border-brand-500"
+                step="0.1"
+                min="0"
+                autoFocus
+              />
+              <span className="text-[11px] text-white/30">–</span>
+              <input
+                type="number"
+                value={editEnd}
+                onChange={(e) => setEditEnd(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const s = parseFloat(editStart)
+                    const en = parseFloat(editEnd)
+                    if (!isNaN(s) && !isNaN(en) && s < en && s >= 0) {
+                      onUpdate({ start: s, end: en })
+                    }
+                    setShowTimeEdit(false)
+                  } else if (e.key === 'Escape') {
+                    setShowTimeEdit(false)
+                  }
+                }}
+                className="w-14 px-1 py-0.5 text-[11px] font-mono bg-white/10 border border-white/20 rounded text-white text-center focus:outline-none focus:border-brand-500"
+                step="0.1"
+                min="0"
+              />
+              <button
+                onClick={() => setShowTimeEdit(false)}
+                className="text-[10px] text-white/30 hover:text-white/50 ml-0.5"
+              >
+                esc
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => {
+                if (e.shiftKey) {
+                  // Shift+click opens time editor
+                  setEditStart(segment.start.toFixed(1))
+                  setEditEnd(segment.end.toFixed(1))
+                  setShowTimeEdit(true)
+                } else {
+                  onSeek(segment.start)
+                }
+              }}
+              className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/50 transition-colors font-mono"
+              title="Click to seek · Shift+click to edit times"
+            >
+              <Clock className="w-3 h-3 opacity-50" />
+              {formatTime(segment.start)} – {formatTime(segment.end)}
+            </button>
+          )}
+        </div>
 
         {/* Spacer */}
         <div className="flex-1" />

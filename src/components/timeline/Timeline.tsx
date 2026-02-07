@@ -77,6 +77,7 @@ export function Timeline({
     createClip,
     deleteClip,
     deleteSceneWithClips,
+    updateSegment,
     workflow,
     setAutoProgress,
     clearWorkflowError,
@@ -490,7 +491,7 @@ export function Timeline({
             icon: Plus,
             onClick: () => {
               saveToHistory()
-              createClip(contextMenu.itemId!, contextMenu.time, Math.min(contextMenu.time + 8, duration))
+              createClip(contextMenu.time, Math.min(contextMenu.time + 8, duration), undefined, contextMenu.itemId!)
             },
           },
           {
@@ -543,7 +544,7 @@ export function Timeline({
             onClick: () => {
               if (sceneAtTime) {
                 saveToHistory()
-                createClip(sceneAtTime.id, contextMenu.time, Math.min(contextMenu.time + 8, sceneAtTime.endTime))
+                createClip(contextMenu.time, Math.min(contextMenu.time + 8, sceneAtTime.endTime), undefined, sceneAtTime.id)
               }
             },
             disabled: !sceneAtTime,
@@ -903,6 +904,8 @@ export function Timeline({
               labelWidth={LABEL_WIDTH}
               duration={duration}
               onSeek={onSeek}
+              onUpdateSegment={(id, updates) => updateSegment(id, updates)}
+              findSnapPoint={findSnapPoint}
             />
           )}
 

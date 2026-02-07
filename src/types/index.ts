@@ -97,8 +97,8 @@ export interface Scene {
 
 export interface Clip {
   id: string
-  sceneId: string
-  segmentId: string
+  sceneId?: string
+  segmentId?: string
   title: string
   startTime: number
   endTime: number

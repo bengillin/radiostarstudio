@@ -1,0 +1,202 @@
+'use client'
+
+import { useState, useRef, useCallback } from 'react'
+import {
+  Users, Clapperboard, Clock, MapPin, Heart,
+  Upload, Trash2, X, Image as ImageIcon,
+} from 'lucide-react'
+import { useProjectStore } from '@/store/project-store'
+import type { ElementCategory } from '@/types'
+
+const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: typeof Users; color: string }> = {
+  who: { label: 'Who', icon: Users, color: 'text-blue-400' },
+  what: { label: 'What', icon: Clapperboard, color: 'text-orange-400' },
+  when: { label: 'When', icon: Clock, color: 'text-yellow-400' },
+  where: { label: 'Where', icon: MapPin, color: 'text-green-400' },
+  why: { label: 'Why', icon: Heart, color: 'text-pink-400' },
+}
+
+interface WorldElementDetailViewProps {
+  elementId: string
+  onClose: () => void
+}
+
+export function WorldElementDetailView({ elementId, onClose }: WorldElementDetailViewProps) {
+  const {
+    elements, scenes, elementImages,
+    updateElement, deleteElement,
+    setElementImage, deleteElementImage,
+  } = useProjectStore()
+
+  const element = elements.find((e) => e.id === elementId)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isUploading, setIsUploading] = useState(false)
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !element) return
+
+    setIsUploading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const imageId = `elem-img-${Date.now()}`
+      setElementImage({
+        id: imageId,
+        elementId: element.id,
+        url: reader.result as string,
+        source: 'upload',
+        createdAt: new Date().toISOString(),
+      })
+      setIsUploading(false)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }, [element, setElementImage])
+
+  if (!element) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-white/40">Element not found</p>
+      </div>
+    )
+  }
+
+  const config = CATEGORY_CONFIG[element.category]
+  const Icon = config.icon
+  const images = element.referenceImageIds
+    .map((id) => elementImages[id])
+    .filter(Boolean)
+
+  const usageCount = scenes.filter((s) =>
+    s.elementRefs?.some((r) => r.elementId === element.id)
+  ).length
+
+  return (
+    <div className="space-y-6 py-2">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div className={`p-2 rounded-lg bg-white/5 ${config.color}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <input
+            type="text"
+            value={element.name}
+            onChange={(e) => updateElement(element.id, { name: e.target.value })}
+            className="w-full bg-transparent text-lg font-semibold text-white focus:outline-none border-b border-transparent focus:border-white/20 pb-1"
+            placeholder="Element name..."
+          />
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`text-xs font-medium uppercase tracking-wide ${config.color}`}>
+              {config.label}
+            </span>
+            {usageCount > 0 && (
+              <span className="text-xs text-white/30">
+                Used in {usageCount} scene{usageCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+        >
+          <X className="w-4 h-4 text-white/40" />
+        </button>
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="text-xs text-white/40 uppercase tracking-wide block mb-2">
+          Description
+        </label>
+        <textarea
+          value={element.description}
+          onChange={(e) => updateElement(element.id, { description: e.target.value })}
+          placeholder="Describe this element in detail for AI generation..."
+          className="w-full h-32 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500 leading-relaxed"
+        />
+        <p className="text-[11px] text-white/25 mt-1">
+          This description is used as context when generating frames and videos
+        </p>
+      </div>
+
+      {/* Reference Images */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs text-white/40 uppercase tracking-wide">
+            Reference Images
+          </label>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-white/50 hover:text-white/70 hover:bg-white/5 rounded transition-colors"
+          >
+            <Upload className="w-3 h-3" />
+            Upload
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageUpload}
+          />
+        </div>
+
+        {images.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {images.map((img) => (
+              <div key={img.id} className="group relative aspect-square rounded-lg overflow-hidden bg-white/5">
+                <img
+                  src={img.url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+                <button
+                  onClick={() => deleteElementImage(img.id, element.id)}
+                  className="absolute top-1 right-1 p-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 className="w-3 h-3 text-red-400" />
+                </button>
+                {img.source === 'generated' && (
+                  <span className="absolute bottom-1 left-1 text-[9px] bg-black/60 px-1 py-0.5 rounded text-white/60">
+                    AI
+                  </span>
+                )}
+              </div>
+            ))}
+            {/* Upload placeholder */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="aspect-square rounded-lg border border-dashed border-white/15 hover:border-white/30 flex items-center justify-center transition-colors"
+            >
+              <Upload className="w-5 h-5 text-white/20" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-8 border border-dashed border-white/15 hover:border-white/30 rounded-lg flex flex-col items-center justify-center gap-2 transition-colors"
+          >
+            <ImageIcon className="w-8 h-8 text-white/15" />
+            <span className="text-xs text-white/30">Add reference images for visual consistency</span>
+          </button>
+        )}
+      </div>
+
+      {/* Danger zone */}
+      <div className="pt-4 border-t border-white/10">
+        <button
+          onClick={() => {
+            deleteElement(element.id)
+            onClose()
+          }}
+          className="flex items-center gap-2 px-3 py-2 text-xs text-red-400/70 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete element
+        </button>
+      </div>
+    </div>
+  )
+}

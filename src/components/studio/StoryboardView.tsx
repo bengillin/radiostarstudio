@@ -60,8 +60,8 @@ export function StoryboardView({ clips, scenes, frames, selectedClipIds, onSelec
     <div className="flex-1 overflow-y-auto p-4">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {sortedClips.map((clip) => {
-          const scene = scenes.find(s => s.id === clip.sceneId)
-          const sceneIndex = sceneIndexMap[clip.sceneId] ?? 0
+          const scene = clip.sceneId ? scenes.find(s => s.id === clip.sceneId) : undefined
+          const sceneIndex = clip.sceneId ? (sceneIndexMap[clip.sceneId] ?? 0) : 0
           const colorClass = SCENE_COLORS[sceneIndex % SCENE_COLORS.length]
           const frame = getStartFrame(clip.id)
           const isSelected = selectedClipIds.includes(clip.id)

@@ -748,7 +748,7 @@ export function Timeline({
             >
               <span className="text-[10px] text-white/40 uppercase">Clips</span>
             </div>
-            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH }}>
+            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH, minWidth: timelineWidth }}>
               {/* Scene boundary indicators */}
               {sceneBoundaryLines.map((line, i) => (
                 <div
@@ -863,7 +863,7 @@ export function Timeline({
             >
               <span className="text-[10px] text-white/40 uppercase">Scenes</span>
             </div>
-            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH }}>
+            <div className="h-full relative" style={{ marginLeft: LABEL_WIDTH, width: timelineWidth }}>
               {scenes.map((scene: Scene) => {
                 const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
                 const hasClipsOutside = sceneClips.some((c: Clip) =>

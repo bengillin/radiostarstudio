@@ -150,7 +150,7 @@ export function WaveformTrack({
       <div
         ref={containerRef}
         className="h-full cursor-pointer relative overflow-hidden"
-        style={{ marginLeft: labelWidth }}
+        style={{ marginLeft: labelWidth, width: trackWidth }}
         onClick={handleClick}
       >
         {isLoading ? (

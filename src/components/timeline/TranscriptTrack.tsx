@@ -1,6 +1,7 @@
 'use client'
 
 import type { TranscriptSegment } from '@/types'
+import { getSegmentColor } from '@/lib/segment-colors'
 
 interface TranscriptTrackProps {
   segments: TranscriptSegment[]
@@ -8,18 +9,6 @@ interface TranscriptTrackProps {
   labelWidth: number // width of track labels
   duration: number
   onSeek?: (time: number) => void
-}
-
-// Color mapping for segment types
-const SEGMENT_COLORS: Record<string, string> = {
-  verse: 'bg-blue-500/30 border-blue-500/50',
-  chorus: 'bg-purple-500/30 border-purple-500/50',
-  bridge: 'bg-orange-500/30 border-orange-500/50',
-  intro: 'bg-teal-500/30 border-teal-500/50',
-  outro: 'bg-pink-500/30 border-pink-500/50',
-  pre_chorus: 'bg-indigo-500/30 border-indigo-500/50',
-  hook: 'bg-yellow-500/30 border-yellow-500/50',
-  instrumental: 'bg-green-500/30 border-green-500/50',
 }
 
 export function TranscriptTrack({
@@ -49,11 +38,11 @@ export function TranscriptTrack({
       {/* Segments content */}
       <div
         className="h-full relative"
-        style={{ marginLeft: labelWidth }}
+        style={{ marginLeft: labelWidth, width: trackWidth }}
       >
         {segments.map((segment) => {
-          const segmentType = segment.type?.toLowerCase() || 'default'
-          const colorClass = SEGMENT_COLORS[segmentType] || 'bg-white/10 border-white/20'
+          const colors = getSegmentColor(segment.type || '')
+          const colorClass = `${colors.bg} ${colors.border}`
           const width = (segment.end - segment.start) * zoom
           const left = segment.start * zoom
 

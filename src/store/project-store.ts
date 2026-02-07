@@ -40,6 +40,9 @@ interface ProjectStore {
   // Transcript
   transcript: TranscriptSegment[]
   setTranscript: (segments: TranscriptSegment[]) => void
+  updateSegment: (id: string, updates: Partial<TranscriptSegment>) => void
+  addSegment: (segment: TranscriptSegment) => void
+  deleteSegment: (id: string) => void
 
   // Scenes & Clips
   scenes: Scene[]
@@ -208,6 +211,20 @@ export const useProjectStore = create<ProjectStore>()(
       // Transcript
       transcript: [],
       setTranscript: (transcript) => set({ transcript }),
+      updateSegment: (id, updates) => set((state) => ({
+        transcript: state.transcript.map((s) =>
+          s.id === id ? { ...s, ...updates } : s
+        ),
+      })),
+      addSegment: (segment) => set((state) => ({
+        transcript: [...state.transcript, segment].sort((a, b) => a.start - b.start),
+      })),
+      deleteSegment: (id) => set((state) => ({
+        transcript: state.transcript.filter((s) => s.id !== id),
+        clips: state.clips.map((c) =>
+          c.segmentId === id ? { ...c, segmentId: '' } : c
+        ),
+      })),
 
       // Scenes
       scenes: [],

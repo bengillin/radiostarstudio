@@ -19,6 +19,7 @@ import { ExportDialog } from '@/components/ui/ExportDialog'
 import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { ElementsPanel } from '@/components/studio/ElementsPanel'
+import { LyricsPanel } from '@/components/studio/LyricsPanel'
 import { StoryboardView } from '@/components/studio/StoryboardView'
 import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
 import { useWorkflowAutomation } from '@/hooks/useWorkflowAutomation'
@@ -530,35 +531,7 @@ function StudioPageContent() {
               {leftPanelTab === 'world' ? (
                 <ElementsPanel />
               ) : leftPanelTab === 'lyrics' ? (
-                <div className="space-y-2">
-                  {transcript.length === 0 ? (
-                    <div className="text-center py-8">
-                      <Music className="w-8 h-8 text-white/20 mx-auto mb-2" />
-                      <p className="text-sm text-white/40">No lyrics yet</p>
-                      <p className="text-xs text-white/30 mt-1">
-                        {audioFile ? 'Transcribe audio to see lyrics' : 'Upload audio first'}
-                      </p>
-                    </div>
-                  ) : (
-                    transcript.map((segment: TranscriptSegment) => (
-                      <div
-                        key={segment.id}
-                        className="p-3 rounded-lg bg-white/5 border border-white/10 cursor-pointer hover:border-white/20 transition-colors"
-                        onClick={() => handleSeek(segment.start)}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 uppercase">
-                            {segment.type}
-                          </span>
-                          <span className="text-xs text-white/40">
-                            {formatTime(segment.start)}
-                          </span>
-                        </div>
-                        <p className="text-sm text-white/70 line-clamp-2">{segment.text}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
               ) : (
                 <div className="space-y-2">
                   {/* Add scene button */}

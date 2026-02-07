@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, elements, globalStyle, model, clipDuration } = body
+    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, elements, globalStyle, model, clipDuration, aspectRatio } = body
 
     if (!clipId || !startFrameUrl) {
       return NextResponse.json(
@@ -98,10 +98,11 @@ ${interpolationNote}`
     console.log('[generate-video] Calling Veo API with model:', videoModel, 'duration:', videoDuration + 's')
 
     // Build config - add lastFrame for interpolation if end frame is available
+    const resolvedAspect = aspectRatio || '16:9'
     const config: Record<string, unknown> = {
       numberOfVideos: 1,
       durationSeconds: videoDuration,
-      aspectRatio: '16:9',
+      aspectRatio: resolvedAspect,
       personGeneration: 'allow_adult',
       resolution: '720p',
     }

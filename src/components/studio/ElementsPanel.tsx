@@ -21,9 +21,13 @@ const CATEGORIES: ElementCategory[] = ['who', 'what', 'when', 'where', 'why']
 
 interface ElementsPanelProps {
   onSelectElement?: (id: string) => void
+  selectedElementId?: string | null
+  globalStyle?: string
+  onStyleChange?: (style: string) => void
+  showStyle?: boolean
 }
 
-export function ElementsPanel({ onSelectElement }: ElementsPanelProps = {}) {
+export function ElementsPanel({ onSelectElement, selectedElementId, globalStyle, onStyleChange, showStyle }: ElementsPanelProps = {}) {
   const {
     elements, scenes, elementImages,
     addElement, updateElement, deleteElement,
@@ -79,6 +83,20 @@ export function ElementsPanel({ onSelectElement }: ElementsPanelProps = {}) {
 
   return (
     <div className="space-y-3">
+      {/* Visual Style */}
+      {showStyle && (
+        <div className="pb-3 border-b border-white/10">
+          <label className="text-xs text-white/40 uppercase">Visual Style</label>
+          <textarea
+            value={globalStyle ?? ''}
+            onChange={(e) => onStyleChange?.(e.target.value)}
+            placeholder="Describe the visual style... (e.g., 'Neon-lit cyberpunk city at night')"
+            className="w-full mt-1 h-20 p-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
+          />
+          <p className="text-[10px] text-white/30 mt-1">Global style applied to all generations</p>
+        </div>
+      )}
+
       {/* Category filter tabs */}
       <div className="flex flex-wrap gap-1">
         <button
@@ -135,7 +153,9 @@ export function ElementsPanel({ onSelectElement }: ElementsPanelProps = {}) {
             return (
               <div
                 key={element.id}
-                className="rounded-lg bg-white/5 border border-white/10 overflow-hidden"
+                className={`rounded-lg bg-white/5 border overflow-hidden ${
+                  selectedElementId === element.id ? 'border-brand-500/50' : 'border-white/10'
+                }`}
               >
                 {/* Header */}
                 <div

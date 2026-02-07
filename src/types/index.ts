@@ -69,6 +69,35 @@ export interface SceneElementRef {
 }
 
 // ============================================
+// CAMERA & FILM SETTINGS
+// ============================================
+
+export type CameraType = 'film' | 'digital'
+
+export type FilmStock =
+  | 'kodak-vision3-500t' | 'kodak-vision3-250d' | 'kodak-vision3-50d'
+  | 'kodak-ektachrome' | 'fuji-eterna-500t' | 'fuji-provia'
+  | 'ilford-hp5' | 'cinestill-800t' | 'custom'
+
+export type LensType =
+  | 'wide' | 'standard' | 'portrait' | 'telephoto'
+  | 'macro' | 'anamorphic' | 'custom'
+
+export type AspectRatio = '16:9' | '2.39:1' | '4:3' | '1:1' | '9:16'
+
+export interface CameraSettings {
+  cameraType?: CameraType
+  filmStock?: FilmStock
+  customFilmStock?: string
+  lensType?: LensType
+  focalLength?: string
+  customLens?: string
+  aspectRatio?: AspectRatio
+  depthOfField?: 'shallow' | 'medium' | 'deep'
+  grainIntensity?: 'none' | 'light' | 'medium' | 'heavy'
+}
+
+// ============================================
 // SCENES & CLIPS
 // ============================================
 
@@ -93,6 +122,9 @@ export interface Scene {
 
   // Visual direction
   aesthetic: VisualAesthetic
+
+  // Per-scene camera overrides
+  cameraOverrides?: Partial<CameraSettings>
 }
 
 export interface Clip {

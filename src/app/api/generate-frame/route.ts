@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { prompt, clipId, type, scene, globalStyle, model, elements, referenceImages, count } = body
+    const { prompt, clipId, type, scene, globalStyle, model, elements, referenceImages, count, aspectRatio } = body
     const frameCount = Math.min(Math.max(count || 1, 1), 4)
 
     if (!prompt) {
@@ -46,7 +46,8 @@ export async function POST(request: NextRequest) {
 - Why/Mood: ${scene.why || 'unspecified'}`
     }
 
-    const fullPrompt = `Cinematic frame for a music video. ${sceneContext} Visual Style: ${globalStyle || 'cinematic, high quality'}. Frame: ${prompt}. 16:9 aspect ratio, cinematic composition, rich detail and lighting.`
+    const resolvedAspect = aspectRatio || '16:9'
+    const fullPrompt = `Cinematic frame for a music video. ${sceneContext} Visual Style: ${globalStyle || 'cinematic, high quality'}. Frame: ${prompt}. ${resolvedAspect} aspect ratio, cinematic composition, rich detail and lighting.`
 
     // Use Imagen 4.0 API (predict endpoint)
     if (imageModel.startsWith('imagen')) {
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
           outputMimeType: 'image/jpeg',
           sampleCount: frameCount,
           personGeneration: 'ALLOW_ADULT',
-          aspectRatio: '16:9',
+          aspectRatio: resolvedAspect,
         },
       }
       console.log('[generate-frame] Imagen request:', JSON.stringify(requestBody).substring(0, 300))
@@ -161,7 +162,7 @@ export async function POST(request: NextRequest) {
       config: {
         responseModalities: ['image', 'text'],
         imageConfig: {
-          aspectRatio: '16:9',
+          aspectRatio: resolvedAspect,
         },
       },
     })

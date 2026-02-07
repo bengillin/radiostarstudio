@@ -3,10 +3,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Music, Upload, Layers, Film, Download,
-  Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video,
-  Plus, Trash2, FolderOpen, LayoutGrid, Monitor, AudioLines
+  Music, Upload, Layers, Download, Settings,
+  Play, Pause, Loader2, ChevronDown, ChevronUp,
+  Clapperboard, Plus, Trash2, FolderOpen, LayoutGrid, Globe,
+  AlignLeft, BookOpen, Camera
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Timeline } from '@/components/timeline'
@@ -14,21 +14,22 @@ import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
 import { ProjectSwitcher } from '@/components/ui/ProjectSwitcher'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { GenerationQueue } from '@/components/ui/GenerationQueue'
+import { GenerationQueuePanel, useQueueProcessor } from '@/components/ui/GenerationQueue'
 import { ExportDialog } from '@/components/ui/ExportDialog'
-import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
+import { MediaLibraryPanel } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
 import { ElementsPanel } from '@/components/studio/ElementsPanel'
-import { LyricsPanel } from '@/components/studio/LyricsPanel'
 import { LyricsNavigator } from '@/components/studio/LyricsNavigator'
 import { StoryboardView } from '@/components/studio/StoryboardView'
 import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
 import { WorldElementDetailView } from '@/components/studio/WorldElementDetail'
+import { LyricsPanel } from '@/components/studio/LyricsPanel'
+import { CameraSettingsEditor } from '@/components/studio/CameraSettingsEditor'
 import { useWorkflowAutomation } from '@/hooks/useWorkflowAutomation'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
 import { detectBeats } from '@/lib/beat-detection'
-import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo, ElementCategory } from '@/types'
+import type { TranscriptSegment, Scene, Clip, CameraSettings } from '@/types'
 
 // Veo 3.1 video duration constraints
 const VEO_DURATIONS = [4, 6, 8] as const
@@ -51,30 +52,20 @@ function StudioPageContent() {
     audioFile,
     setAudioFile,
     transcript,
-    setTranscript,
     scenes,
-    setScenes,
-    updateScene,
     clips,
-    setClips,
     updateClip,
     deleteClip,
     addClip,
     createScene,
     deleteSceneWithClips,
-    getClipsForScene,
     createClip,
     generationQueue,
     queueAllFrames,
     queueAllVideos,
-    queueFrame,
-    queueVideo,
-    isClipQueued,
     startQueue,
     frames,
-    setFrame,
     videos,
-    setVideo,
     globalStyle,
     setGlobalStyle,
     modelSettings,
@@ -88,15 +79,15 @@ function StudioPageContent() {
     elements,
     getResolvedElementsForScene,
     setBeats,
+    updateScene,
+    cameraSettings,
+    setCameraSettings,
   } = useProjectStore()
 
   // Workflow automation
   const {
     startTranscription,
     startPlanning,
-    stage: workflowStage,
-    progress: workflowProgress,
-    error: workflowError,
   } = useWorkflowAutomation({
     onTranscriptionComplete: () => showToast('Transcription complete', 'success'),
     onPlanningComplete: () => showToast('Scene planning complete', 'success'),
@@ -112,36 +103,22 @@ function StudioPageContent() {
   const [framePrompt, setFramePrompt] = useState('')
   const [motionPrompt, setMotionPrompt] = useState('')
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
-  const [showQueueModal, setShowQueueModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
-  const [showMediaLibrary, setShowMediaLibrary] = useState(false)
-  const [scenesSubView, setScenesSubView] = useState<'preview' | 'storyboard'>('preview')
+  const [rightPanelTab, setRightPanelTab] = useState<'library' | 'queue'>('library')
+  const [showSettingsPopover, setShowSettingsPopover] = useState(false)
+  const [centerTab, setCenterTab] = useState<'lyrics' | 'story' | 'world' | 'scenes' | 'clips'>('lyrics')
   const [isDetectingBeats, setIsDetectingBeats] = useState(false)
-  const [leftPanelTab, setLeftPanelTab] = useState<'lyrics' | 'scenes' | 'world'>('scenes')
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null)
 
   // Scene/Clip management state
   const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
-  const [showCreateClipForm, setShowCreateClipForm] = useState(false)
-  const [newClipSceneId, setNewClipSceneId] = useState<string>('')
-  const [newClipStart, setNewClipStart] = useState(0)
-  const [newClipEnd, setNewClipEnd] = useState(VEO_MAX_DURATION)
-  const [newClipTitle, setNewClipTitle] = useState('')
+
+  // Keep queue processing alive regardless of which tab is shown
+  useQueueProcessor()
 
   // Check if any clips have videos generated
   const clipsWithVideos = clips.filter((c: Clip) => c.video || videos[`video-${c.id}`])
   const hasVideos = clipsWithVideos.length > 0
-
-  // Determine current step based on state
-  const currentStep = !audioFile
-    ? 'upload'
-    : transcript.length === 0
-    ? 'transcribe'
-    : scenes.length === 0
-    ? 'plan'
-    : hasVideos
-    ? 'export'
-    : 'generate'
 
   // Audio file handling
   const [isLoadingAudio, setIsLoadingAudio] = useState(false)
@@ -336,10 +313,10 @@ function StudioPageContent() {
           }
           break
         case 'KeyG':
-          // G = open generation queue
+          // G = switch to queue tab
           if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            setShowQueueModal(true)
+            setRightPanelTab('queue')
           }
           break
         case 'KeyE':
@@ -350,17 +327,24 @@ function StudioPageContent() {
           }
           break
         case 'KeyM':
-          // M = open media library
+          // M = switch to library tab
           if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            setShowMediaLibrary(true)
+            setRightPanelTab('library')
           }
           break
         case 'KeyB':
-          // B = toggle storyboard view (only when on scenes tab)
+          // B = switch to clips tab
           if (!e.metaKey && !e.ctrlKey) {
             e.preventDefault()
-            setScenesSubView(v => v === 'storyboard' ? 'preview' : 'storyboard')
+            setCenterTab('clips')
+          }
+          break
+        case 'KeyL':
+          // L = switch to lyrics tab
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            setCenterTab('lyrics')
           }
           break
       }
@@ -373,8 +357,6 @@ function StudioPageContent() {
   // Get selected clip and its scene
   const selectedClip = clips.find((c: Clip) => c.id === selectedClipId)
   const selectedScene = selectedClip?.sceneId ? scenes.find((s: Scene) => s.id === selectedClip.sceneId) : null
-  const selectedClipVideo = selectedClip?.video || (selectedClipId ? videos[`video-${selectedClipId}`] : null)
-
   // Auto-fill frame prompt when clip is selected
   useEffect(() => {
     if (!selectedClip) return
@@ -428,9 +410,40 @@ function StudioPageContent() {
   }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle, elements, getResolvedElementsForScene])
 
   return (
-    <div className="h-screen flex flex-col bg-black">
+    <div
+      className="h-screen flex flex-col bg-black"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault()
+          if (!audioFile) setIsDraggingAudio(true)
+        }
+      }}
+      onDragLeave={(e) => {
+        // Only reset when leaving the root element
+        if (e.currentTarget === e.target) setIsDraggingAudio(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setIsDraggingAudio(false)
+        const file = e.dataTransfer.files[0]
+        if (file && file.type.startsWith('audio/')) {
+          processAudioFile(file)
+        }
+      }}
+    >
       {/* Hidden audio element */}
       {audioFile && <audio ref={audioRef} src={audioFile.url} preload="auto" />}
+
+      {/* Page-level drag overlay */}
+      {isDraggingAudio && !audioFile && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center pointer-events-none">
+          <div className="border-2 border-dashed border-brand-500/60 rounded-2xl p-12 text-center">
+            <Music className="w-16 h-16 text-brand-400 mx-auto mb-4" />
+            <p className="text-xl text-white/80 font-medium">Drop your audio file</p>
+            <p className="text-sm text-white/40 mt-2">MP3, WAV, FLAC, etc.</p>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -438,7 +451,7 @@ function StudioPageContent() {
         <div className="flex-1 flex min-h-0">
           {/* Left panel - Tabbed Properties */}
           <aside className="w-80 border-r border-white/10 flex flex-col flex-shrink-0 min-h-0">
-            {/* Brand + Project Switcher */}
+            {/* Brand + Project Switcher + Export/Settings */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 flex-shrink-0">
               <div
                 className="w-7 h-7 rounded-md bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center cursor-pointer flex-shrink-0"
@@ -448,6 +461,60 @@ function StudioPageContent() {
                 <Music className="w-3.5 h-3.5 text-white" />
               </div>
               <ProjectSwitcher />
+              <div className="ml-auto flex items-center gap-1">
+                {hasVideos && (
+                  <button
+                    onClick={() => setShowExportDialog(true)}
+                    className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
+                    title="Export video (⌘E)"
+                  >
+                    <Download className="w-4 h-4 text-white/50" />
+                  </button>
+                )}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSettingsPopover(!showSettingsPopover)}
+                    className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${
+                      showSettingsPopover ? 'bg-white/10' : 'hover:bg-white/10'
+                    }`}
+                    title="AI model settings"
+                  >
+                    <Settings className="w-4 h-4 text-white/50" />
+                  </button>
+                  {showSettingsPopover && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowSettingsPopover(false)} />
+                      <div className="absolute right-0 top-full mt-1 w-64 bg-neutral-900 border border-white/10 rounded-lg shadow-xl z-50 p-3 space-y-3">
+                        <p className="text-xs font-semibold text-white/40 uppercase">AI Models</p>
+                        <div>
+                          <label className="text-xs text-white/40 block mb-1">Image Generation</label>
+                          <select
+                            value={modelSettings.image}
+                            onChange={(e) => setModelSettings({ image: e.target.value })}
+                            className="w-full px-2 py-1.5 bg-white/5 border border-white/10 rounded-md text-sm text-white focus:outline-none focus:border-brand-500"
+                          >
+                            {AVAILABLE_MODELS.image.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-white/40 block mb-1">Video Generation</label>
+                          <select
+                            value={modelSettings.video}
+                            onChange={(e) => setModelSettings({ video: e.target.value })}
+                            className="w-full px-2 py-1.5 bg-white/5 border border-white/10 rounded-md text-sm text-white focus:outline-none focus:border-brand-500"
+                          >
+                            {AVAILABLE_MODELS.video.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name} - {m.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Song */}
@@ -498,50 +565,176 @@ function StudioPageContent() {
               )}
             </div>
 
-            {/* Tabs */}
-            <div className="flex border-b border-white/10 flex-shrink-0">
-              <button
-                onClick={() => setLeftPanelTab('lyrics')}
-                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-                  leftPanelTab === 'lyrics'
-                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
-                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
-                }`}
-              >
-                Lyrics {transcript.length > 0 && `(${transcript.length})`}
-              </button>
-              <button
-                onClick={() => setLeftPanelTab('scenes')}
-                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-                  leftPanelTab === 'scenes'
-                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
-                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
-                }`}
-              >
-                Scenes {scenes.length > 0 && `(${scenes.length})`}
-              </button>
-              <button
-                onClick={() => setLeftPanelTab('world')}
-                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-                  leftPanelTab === 'world'
-                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
-                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
-                }`}
-              >
-                World {elements.length > 0 && `(${elements.length})`}
-              </button>
+            {/* Lyrics navigator — always visible */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <LyricsNavigator onSeek={handleSeek} currentTime={currentTime} />
             </div>
 
-            {/* Tab content */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {leftPanelTab === 'world' ? (
-                <ElementsPanel onSelectElement={(id) => setSelectedElementId(id)} />
-              ) : leftPanelTab === 'lyrics' ? (
-                <LyricsNavigator onSeek={handleSeek} currentTime={currentTime} />
-              ) : (
-                <div className="space-y-2">
-                  {/* Add scene button */}
-                  {audioFile && (
+          </aside>
+
+          {/* Center - Tab-driven workspace */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            {/* Center tab bar */}
+            <div className="flex border-b border-white/10 flex-shrink-0">
+              {([
+                { id: 'lyrics' as const, icon: AlignLeft, label: 'Lyrics', count: transcript.length },
+                { id: 'story' as const, icon: BookOpen, label: 'Story', count: scenes.length },
+                { id: 'world' as const, icon: Globe, label: 'World', count: elements.length },
+                { id: 'scenes' as const, icon: Clapperboard, label: 'Scenes', count: scenes.length },
+                { id: 'clips' as const, icon: LayoutGrid, label: 'Clips', count: clips.length },
+              ]).map(({ id, icon: Icon, label, count }) => (
+                <button
+                  key={id}
+                  onClick={() => setCenterTab(id)}
+                  className={`px-3 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                    centerTab === id
+                      ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                      : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {label} {count > 0 && `(${count})`}
+                </button>
+              ))}
+            </div>
+
+            {/* Center content — priority: clip selected → detail, then tab-driven */}
+            <div className="flex-1 flex overflow-hidden">
+              {selectedClip ? (
+                /* Clip selected — always show DetailPanel regardless of tab */
+                <div className="w-full h-full max-w-4xl mx-auto p-4">
+                  <DetailPanel
+                    clip={selectedClip}
+                    scene={selectedScene ?? undefined}
+                    onClose={() => clearSelection()}
+                    framePrompt={framePrompt}
+                    setFramePrompt={setFramePrompt}
+                    motionPrompt={motionPrompt}
+                    setMotionPrompt={setMotionPrompt}
+                  />
+                </div>
+              ) : centerTab === 'lyrics' ? (
+                /* Lyrics tab — full editor */
+                !audioFile ? (
+                  <div className="w-full h-full flex items-center justify-center p-4">
+                    <label
+                      className={`w-full max-w-3xl aspect-video rounded-xl border border-dashed border-white/20 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                        isDraggingAudio ? 'bg-brand-500/10 border-brand-500/40' : 'hover:bg-white/5'
+                      }`}
+                      onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+                      onDragLeave={() => setIsDraggingAudio(false)}
+                      onDrop={handleAudioDrop}
+                    >
+                      <input type="file" accept="audio/*" className="hidden" onChange={handleAudioFileSelect} />
+                      {isLoadingAudio ? (
+                        <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
+                      ) : (
+                        <Music className="w-12 h-12 text-white/20 mb-4" />
+                      )}
+                      <p className="text-lg text-white/60 font-medium">
+                        {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
+                      </p>
+                      <p className="text-sm text-white/30 mt-2">or click to browse</p>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="w-full h-full overflow-y-auto p-4">
+                    <div className="max-w-3xl mx-auto">
+                      <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
+                    </div>
+                  </div>
+                )
+              ) : centerTab === 'story' ? (
+                /* Story tab — narrative scene cards with clip thumbnails */
+                <div className="w-full h-full overflow-y-auto p-4">
+                  <div className="max-w-3xl mx-auto space-y-4">
+                    {scenes.length === 0 ? (
+                      <div className="text-center py-12">
+                        <BookOpen className="w-12 h-12 text-white/10 mx-auto mb-4" />
+                        <p className="text-white/40">No scenes yet</p>
+                        <p className="text-sm text-white/25 mt-1">Plan scenes from your lyrics to build the story</p>
+                      </div>
+                    ) : (
+                      scenes.map((scene: Scene) => {
+                        const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
+                        const resolvedElements = getResolvedElementsForScene(scene.id)
+                        const byCategory: Record<string, typeof resolvedElements> = {}
+                        for (const el of resolvedElements) {
+                          ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
+                        }
+                        return (
+                          <div
+                            key={scene.id}
+                            className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-3"
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <button
+                                  className="text-sm font-medium text-white hover:text-brand-400 transition-colors"
+                                  onClick={() => { setCenterTab('scenes'); setExpandedSceneId(scene.id) }}
+                                >
+                                  {scene.title}
+                                </button>
+                                <span className="text-xs text-white/40 ml-2">
+                                  {formatTime(scene.startTime)} - {formatTime(scene.endTime)}
+                                </span>
+                              </div>
+                            </div>
+                            {scene.description && (
+                              <p className="text-xs text-white/60 leading-relaxed">{scene.description}</p>
+                            )}
+                            {/* Element pills */}
+                            {resolvedElements.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {resolvedElements.map((el) => (
+                                  <span
+                                    key={el.id}
+                                    className="px-1.5 py-0.5 rounded text-[10px] bg-white/10 text-white/60"
+                                  >
+                                    {el.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {/* Clip thumbnails */}
+                            {sceneClips.length > 0 && (
+                              <div className="flex gap-2 overflow-x-auto pt-1">
+                                {sceneClips.map((clip: Clip) => {
+                                  const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
+                                  return (
+                                    <button
+                                      key={clip.id}
+                                      onClick={() => selectClip(clip.id)}
+                                      className="flex-shrink-0 rounded-md overflow-hidden border border-white/10 hover:border-brand-500/50 transition-colors"
+                                      title={clip.title}
+                                    >
+                                      {startFrame && typeof startFrame === 'object' ? (
+                                        <img
+                                          src={startFrame.url}
+                                          alt={clip.title}
+                                          className="w-20 h-12 object-cover"
+                                        />
+                                      ) : (
+                                        <div className="w-20 h-12 bg-white/5 flex items-center justify-center">
+                                          <span className="text-[10px] text-white/30 truncate px-1">{clip.title}</span>
+                                        </div>
+                                      )}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : centerTab === 'scenes' ? (
+                /* Scenes tab — scene list */
+                <div className="w-full h-full overflow-y-auto p-4">
+                  <div className="max-w-3xl mx-auto space-y-2">
+                    {/* Add scene button */}
                     <button
                       onClick={() => {
                         saveToHistory()
@@ -553,806 +746,283 @@ function StudioPageContent() {
                       <Plus className="w-4 h-4" />
                       Add Scene
                     </button>
-                  )}
 
-                  {scenes.length === 0 ? (
-                    <div className="text-center py-8">
-                      <Layers className="w-8 h-8 text-white/20 mx-auto mb-2" />
-                      <p className="text-sm text-white/40">No scenes yet</p>
-                      <p className="text-xs text-white/30 mt-1">
-                        {audioFile
-                          ? transcript.length > 0
+                    {scenes.length === 0 ? (
+                      <div className="text-center py-8">
+                        <Layers className="w-8 h-8 text-white/20 mx-auto mb-2" />
+                        <p className="text-sm text-white/40">No scenes yet</p>
+                        <p className="text-xs text-white/30 mt-1">
+                          {transcript.length > 0
                             ? 'Plan scenes from lyrics'
                             : 'Transcribe audio first'
-                          : 'Upload audio first'
-                        }
-                      </p>
-                    </div>
-                  ) : (
-                    scenes.map((scene: Scene) => {
-                      const isExpanded = expandedSceneId === scene.id
-                      const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
-                      return (
-                        <div
-                          key={scene.id}
-                          className="group rounded-lg bg-white/5 border border-white/10 overflow-hidden"
-                        >
+                          }
+                        </p>
+                      </div>
+                    ) : (
+                      scenes.map((scene: Scene) => {
+                        const isExpanded = expandedSceneId === scene.id
+                        const sceneClips = clips.filter((c: Clip) => c.sceneId === scene.id)
+                        return (
                           <div
-                            className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
-                            onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
+                            key={scene.id}
+                            className="group rounded-lg bg-white/5 border border-white/10 overflow-hidden"
                           >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="font-medium truncate text-sm">{scene.title}</p>
-                                <span className="text-xs text-white/40 flex-shrink-0">
-                                  {formatTime(scene.startTime)}
-                                </span>
-                              </div>
-                              <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSceneToDelete({ id: scene.id, clipCount: sceneClips.length })
-                                }}
-                                className="p-1 hover:bg-red-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
-                                title="Delete scene"
-                              >
-                                <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
-                              </button>
-                              {isExpanded ? (
-                                <ChevronUp className="w-4 h-4 text-white/40" />
-                              ) : (
-                                <ChevronDown className="w-4 h-4 text-white/40" />
-                              )}
-                            </div>
-                          </div>
-
-                          {isExpanded && (
-                            <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
-                              {/* Element selectors for 5 Ws */}
-                              {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
-                                <SceneElementSelector
-                                  key={category}
-                                  sceneId={scene.id}
-                                  category={category}
-                                />
-                              ))}
-
-                              {/* Clips in this scene */}
-                              <div className="mt-3 pt-3 border-t border-white/10">
-                                <div className="flex items-center justify-between mb-2">
-                                  <p className="text-xs text-white/40 uppercase">Clips ({sceneClips.length})</p>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      saveToHistory()
-                                      const newStart = sceneClips.length > 0
-                                        ? sceneClips[sceneClips.length - 1].endTime
-                                        : scene.startTime
-                                      const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
-                                      if (newEnd > newStart) {
-                                        createClip(newStart, newEnd, undefined, scene.id)
-                                        showToast('Clip created', 'success')
-                                      } else {
-                                        showToast('No room for new clip in scene', 'error')
-                                      }
-                                    }}
-                                    className="p-1 hover:bg-white/10 rounded transition-colors"
-                                    title="Add clip to scene"
-                                  >
-                                    <Plus className="w-3.5 h-3.5 text-white/60" />
-                                  </button>
+                            <div
+                              className="p-3 cursor-pointer hover:bg-white/5 transition-colors flex items-start justify-between gap-2"
+                              onClick={() => setExpandedSceneId(isExpanded ? null : scene.id)}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className="font-medium truncate text-sm">{scene.title}</p>
+                                  <span className="text-xs text-white/40 flex-shrink-0">
+                                    {formatTime(scene.startTime)}
+                                  </span>
                                 </div>
-                                <div className="space-y-2">
-                                  {sceneClips.map((clip: Clip) => {
-                                    const isSelected = selectedClipIds.includes(clip.id)
-                                    const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
-                                    const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
-                                    return (
-                                      <div
-                                        key={clip.id}
-                                        className={`p-2 rounded text-xs cursor-pointer transition-colors ${
-                                          isSelected
-                                            ? 'bg-brand-500/20 border border-brand-500/50'
-                                            : 'bg-white/5 hover:bg-white/10 border border-transparent'
-                                        }`}
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          isSelected ? clearSelection() : selectClip(clip.id)
-                                        }}
-                                      >
-                                        <div className="flex items-center justify-between mb-1">
-                                          <span className="text-white/70 truncate font-medium">{clip.title}</span>
-                                          <span className="text-white/40 flex-shrink-0 ml-2">
-                                            {(clip.endTime - clip.startTime).toFixed(1)}s
-                                          </span>
-                                        </div>
-                                        {(startFrame || endFrame) && (
-                                          <div className="flex gap-1 mt-2">
-                                            {startFrame && (
-                                              <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
-                                                <img
-                                                  src={typeof startFrame === 'object' ? startFrame.url : ''}
-                                                  alt="Start"
-                                                  className="w-full h-full object-cover"
-                                                />
-                                                <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">S</span>
-                                              </div>
-                                            )}
-                                            {endFrame && (
-                                              <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
-                                                <img
-                                                  src={typeof endFrame === 'object' ? endFrame.url : ''}
-                                                  alt="End"
-                                                  className="w-full h-full object-cover"
-                                                />
-                                                <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">E</span>
-                                              </div>
-                                            )}
+                                <p className="text-xs text-white/50 line-clamp-1">{scene.description}</p>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSceneToDelete({ id: scene.id, clipCount: sceneClips.length })
+                                  }}
+                                  className="p-1 hover:bg-red-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Delete scene"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
+                                </button>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 text-white/40" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-white/40" />
+                                )}
+                              </div>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
+                                {/* Element selectors for 5 Ws */}
+                                {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
+                                  <SceneElementSelector
+                                    key={category}
+                                    sceneId={scene.id}
+                                    category={category}
+                                  />
+                                ))}
+
+                                {/* Per-scene camera overrides */}
+                                <details className="group/cam">
+                                  <summary className="flex items-center gap-1.5 cursor-pointer text-xs text-white/40 hover:text-white/60 transition-colors mt-3 pt-3 border-t border-white/10">
+                                    <Camera className="w-3.5 h-3.5" />
+                                    Camera Overrides
+                                    <ChevronDown className="w-3 h-3 ml-auto group-open/cam:rotate-180 transition-transform" />
+                                  </summary>
+                                  <div className="mt-2">
+                                    <CameraSettingsEditor
+                                      isOverride
+                                      settings={scene.cameraOverrides || {}}
+                                      onChange={(overrides) => updateScene(scene.id, { cameraOverrides: overrides })}
+                                      globalDefaults={cameraSettings}
+                                    />
+                                  </div>
+                                </details>
+
+                                {/* Clips in this scene */}
+                                <div className="mt-3 pt-3 border-t border-white/10">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs text-white/40 uppercase">Clips ({sceneClips.length})</p>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        saveToHistory()
+                                        const newStart = sceneClips.length > 0
+                                          ? sceneClips[sceneClips.length - 1].endTime
+                                          : scene.startTime
+                                        const newEnd = Math.min(newStart + VEO_MAX_DURATION, scene.endTime)
+                                        if (newEnd > newStart) {
+                                          createClip(newStart, newEnd, undefined, scene.id)
+                                          showToast('Clip created', 'success')
+                                        } else {
+                                          showToast('No room for new clip in scene', 'error')
+                                        }
+                                      }}
+                                      className="p-1 hover:bg-white/10 rounded transition-colors"
+                                      title="Add clip to scene"
+                                    >
+                                      <Plus className="w-3.5 h-3.5 text-white/60" />
+                                    </button>
+                                  </div>
+                                  <div className="space-y-2">
+                                    {sceneClips.map((clip: Clip) => {
+                                      const isSelected = selectedClipIds.includes(clip.id)
+                                      const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
+                                      const endFrame = clip.endFrame || frames[`frame-${clip.id}-end`]
+                                      return (
+                                        <div
+                                          key={clip.id}
+                                          className={`p-2 rounded text-xs cursor-pointer transition-colors ${
+                                            isSelected
+                                              ? 'bg-brand-500/20 border border-brand-500/50'
+                                              : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                                          }`}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            isSelected ? clearSelection() : selectClip(clip.id)
+                                          }}
+                                        >
+                                          <div className="flex items-center justify-between mb-1">
+                                            <span className="text-white/70 truncate font-medium">{clip.title}</span>
+                                            <span className="text-white/40 flex-shrink-0 ml-2">
+                                              {(clip.endTime - clip.startTime).toFixed(1)}s
+                                            </span>
                                           </div>
-                                        )}
-                                      </div>
-                                    )
-                                  })}
-                                  {sceneClips.length === 0 && (
-                                    <p className="text-xs text-white/30 italic py-2">No clips yet</p>
-                                  )}
+                                          {(startFrame || endFrame) && (
+                                            <div className="flex gap-1 mt-2">
+                                              {startFrame && (
+                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                  <img
+                                                    src={typeof startFrame === 'object' ? startFrame.url : ''}
+                                                    alt="Start"
+                                                    className="w-full h-full object-cover"
+                                                  />
+                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">S</span>
+                                                </div>
+                                              )}
+                                              {endFrame && (
+                                                <div className="relative w-12 h-8 rounded overflow-hidden bg-white/10">
+                                                  <img
+                                                    src={typeof endFrame === 'object' ? endFrame.url : ''}
+                                                    alt="End"
+                                                    className="w-full h-full object-cover"
+                                                  />
+                                                  <span className="absolute bottom-0 left-0 text-[8px] bg-black/50 px-0.5">E</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                    {sceneClips.length === 0 && (
+                                      <p className="text-xs text-white/30 italic py-2">No clips yet</p>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })
-                  )}
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-
-          </aside>
-
-          {/* Center - Tab-driven workspace */}
-          <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            {/* View toggle header — only for scenes tab */}
-            {leftPanelTab === 'scenes' && clips.length > 0 && !selectedClip && (
-              <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setScenesSubView('preview')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                      scenesSubView === 'preview'
-                        ? 'bg-white/10 text-white'
-                        : 'text-white/40 hover:text-white/60'
-                    }`}
-                  >
-                    <Monitor className="w-3.5 h-3.5" />
-                    Preview
-                  </button>
-                  <button
-                    onClick={() => setScenesSubView('storyboard')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                      scenesSubView === 'storyboard'
-                        ? 'bg-white/10 text-white'
-                        : 'text-white/40 hover:text-white/60'
-                    }`}
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    Storyboard
-                  </button>
-                </div>
-                <span className="text-[10px] text-white/30">B to toggle</span>
-              </div>
-            )}
-
-            {/* Center content — priority: clip selected → detail, then tab-driven */}
-            <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-              {selectedClip ? (
-                /* Clip selected — always show DetailPanel regardless of tab */
-                <div className="w-full h-full max-w-4xl">
-                  <DetailPanel
-                    clip={selectedClip}
-                    scene={selectedScene ?? undefined}
-                    onClose={() => clearSelection()}
-                    framePrompt={framePrompt}
-                    setFramePrompt={setFramePrompt}
-                    motionPrompt={motionPrompt}
-                    setMotionPrompt={setMotionPrompt}
-                  />
-                </div>
-              ) : leftPanelTab === 'lyrics' ? (
-                /* Lyrics tab — full-width writing workspace */
-                <div className="w-full h-full max-w-2xl mx-auto overflow-y-auto">
-                  <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
-                </div>
-              ) : leftPanelTab === 'scenes' ? (
-                /* Scenes tab — preview or storyboard */
-                scenesSubView === 'storyboard' && clips.length > 0 ? (
-                  <div className="w-full h-full">
+              ) : centerTab === 'clips' ? (
+                /* Clips tab (was Storyboard) */
+                clips.length > 0 ? (
+                  <div className="w-full h-full p-4">
                     <StoryboardView
                       clips={clips}
                       scenes={scenes}
                       frames={frames}
                       selectedClipIds={selectedClipIds}
-                      onSelectClip={(clipId) => {
-                        selectClip(clipId)
-                        setScenesSubView('preview')
-                      }}
+                      onSelectClip={(clipId) => selectClip(clipId)}
                     />
                   </div>
                 ) : (
-                  <div className="w-full max-w-3xl aspect-video bg-white/5 rounded-xl border border-white/10 flex items-center justify-center">
-                    {!audioFile ? (
-                      <label
-                        className={`w-full h-full flex flex-col items-center justify-center cursor-pointer transition-colors rounded-xl ${
-                          isDraggingAudio ? 'bg-brand-500/10' : 'hover:bg-white/5'
-                        }`}
-                        onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
-                        onDragLeave={() => setIsDraggingAudio(false)}
-                        onDrop={handleAudioDrop}
-                      >
-                        <input
-                          type="file"
-                          accept="audio/*"
-                          className="hidden"
-                          onChange={handleAudioFileSelect}
+                  <div className="w-full h-full flex items-center justify-center">
+                    <div className="text-center">
+                      <LayoutGrid className="w-12 h-12 text-white/10 mx-auto mb-4" />
+                      <p className="text-white/40">No clips yet</p>
+                      <p className="text-sm text-white/25 mt-1">Create scenes and add clips to see the storyboard</p>
+                    </div>
+                  </div>
+                )
+              ) : centerTab === 'world' ? (
+                /* World tab — side-by-side when element selected */
+                <div className="w-full h-full flex overflow-hidden">
+                  <div className={`${selectedElementId && elements.find(e => e.id === selectedElementId) ? 'w-80 flex-shrink-0 border-r border-white/10' : 'flex-1'} overflow-y-auto p-4`}>
+                    <div className={selectedElementId && elements.find(e => e.id === selectedElementId) ? '' : 'max-w-2xl mx-auto'}>
+                      <ElementsPanel
+                        onSelectElement={(id) => setSelectedElementId(id)}
+                        selectedElementId={selectedElementId}
+                        globalStyle={globalStyle}
+                        onStyleChange={setGlobalStyle}
+                        showStyle={transcript.length > 0}
+                      />
+                      {/* Global camera & film settings */}
+                      <div className="mt-6 pt-6 border-t border-white/10">
+                        <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                          <Camera className="w-3.5 h-3.5" />
+                          Camera & Film
+                        </h3>
+                        <CameraSettingsEditor
+                          settings={cameraSettings}
+                          onChange={setCameraSettings}
                         />
-                        {isLoadingAudio ? (
-                          <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
-                        ) : (
-                          <Music className="w-12 h-12 text-white/20 mb-4" />
-                        )}
-                        <p className="text-lg text-white/60 font-medium">
-                          {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
-                        </p>
-                        <p className="text-sm text-white/30 mt-2">
-                          or click to browse
-                        </p>
-                      </label>
-                    ) : transcript.length > 0 ? (
-                      <div className="text-center p-8">
-                        <p className="text-white/60 mb-2">
-                          {transcript.find((s: TranscriptSegment) => s.start <= currentTime && s.end >= currentTime)?.text || 'Select a clip to edit'}
-                        </p>
-                        <p className="text-sm text-white/30">
-                          Click a clip in the timeline to edit
-                        </p>
                       </div>
-                    ) : (
-                      <p className="text-white/30">Transcribe audio to begin</p>
-                    )}
+                    </div>
                   </div>
-                )
-              ) : leftPanelTab === 'world' ? (
-                /* World tab — element detail or empty state */
-                selectedElementId && elements.find(e => e.id === selectedElementId) ? (
-                  <div className="w-full h-full max-w-2xl mx-auto overflow-y-auto">
-                    <WorldElementDetailView
-                      elementId={selectedElementId}
-                      onClose={() => setSelectedElementId(null)}
-                    />
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <MapPin className="w-12 h-12 text-white/10 mx-auto mb-4" />
-                    <p className="text-white/40">Select an element from the sidebar</p>
-                    <p className="text-sm text-white/25 mt-1">or create a new one</p>
-                  </div>
-                )
+                  {selectedElementId && elements.find(e => e.id === selectedElementId) && (
+                    <div className="flex-1 overflow-y-auto p-4">
+                      <WorldElementDetailView
+                        elementId={selectedElementId}
+                        onClose={() => setSelectedElementId(null)}
+                      />
+                    </div>
+                  )}
+                </div>
               ) : null}
             </div>
           </div>
 
-        {/* Right panel - Actions */}
+        {/* Right panel - Library/Queue */}
         <aside className="w-80 border-l border-white/10 flex flex-col flex-shrink-0 min-h-0">
-          {/* Top bar */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 flex-shrink-0">
+          {/* Tab header */}
+          <div className="flex border-b border-white/10 flex-shrink-0">
             <button
-              onClick={() => setShowMediaLibrary(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/70 hover:bg-white/5 transition-colors"
-              title="Media library (M)"
+              onClick={() => setRightPanelTab('library')}
+              className={`flex-1 px-4 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                rightPanelTab === 'library'
+                  ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                  : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+              }`}
             >
-              <FolderOpen className="w-4 h-4" />
-              <span>Library</span>
+              <FolderOpen className="w-3.5 h-3.5" />
+              Library
             </button>
             <button
-              onClick={() => setShowQueueModal(true)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                generationQueue.items.length > 0
-                  ? 'bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30'
-                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
+              onClick={() => setRightPanelTab('queue')}
+              className={`flex-1 px-4 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                rightPanelTab === 'queue'
+                  ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                  : 'text-white/50 hover:text-white/70 hover:bg-white/5'
               }`}
-              title="Generation queue (G)"
             >
               {generationQueue.isProcessing && !generationQueue.isPaused ? (
-                <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Layers className={`w-4 h-4 ${generationQueue.items.length > 0 ? 'text-brand-400' : 'text-white/60'}`} />
+                <Layers className="w-3.5 h-3.5" />
               )}
-              {generationQueue.items.length > 0 ? (
-                <span className="text-brand-400">
-                  {generationQueue.items.filter(i => i.status === 'complete').length}/
-                  {generationQueue.items.length}
+              Queue
+              {generationQueue.items.length > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  generationQueue.isProcessing
+                    ? 'bg-brand-500/30 text-brand-400'
+                    : 'bg-white/10 text-white/50'
+                }`}>
+                  {generationQueue.items.filter(i => i.status === 'complete').length}/{generationQueue.items.length}
                 </span>
-              ) : (
-                <span className="text-white/60">Queue</span>
               )}
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-6">
-            {/* Workflow status info - shown during early stages */}
-            {(currentStep === 'transcribe' || currentStep === 'plan') && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Workflow Progress
-                </h3>
-                <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-center">
-                  <p className="text-sm text-white/60">
-                    {currentStep === 'transcribe'
-                      ? 'Click "Transcribe" in the workflow bar above to analyze your audio'
-                      : 'Click "Plan Scenes" in the workflow bar above to create scenes'}
-                  </p>
-                  <p className="text-xs text-white/30 mt-2">
-                    {workflowStage === 'transcribing' && `Transcribing... ${workflowProgress.transcription}%`}
-                    {workflowStage === 'planning' && `Planning... ${workflowProgress.planning}%`}
-                    {workflowStage === 'audio_loaded' && 'Ready to transcribe'}
-                    {workflowStage === 'transcribed' && 'Transcription complete - ready to plan scenes'}
-                  </p>
-                </div>
-              </div>
+          {/* Tab content */}
+          <div className="flex-1 overflow-hidden">
+            {rightPanelTab === 'library' ? (
+              <MediaLibraryPanel />
+            ) : (
+              <GenerationQueuePanel />
             )}
-
-            {(currentStep === 'generate' || currentStep === 'export') && (
-              <div className="space-y-6">
-                {/* Batch Generation */}
-                <div>
-                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                    Batch Generation
-                  </h3>
-                  <div className="space-y-2">
-                    <button
-                      onClick={() => {
-                        queueAllFrames('both')
-                        setShowQueueModal(true)
-                        startQueue()
-                      }}
-                      disabled={clips.length === 0}
-                      className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Sparkles className="w-4 h-4" />
-                      Generate All Frames
-                    </button>
-                    <button
-                      onClick={() => {
-                        queueAllVideos()
-                        setShowQueueModal(true)
-                        startQueue()
-                      }}
-                      disabled={clips.length === 0}
-                      className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Film className="w-4 h-4" />
-                      Generate All Videos
-                    </button>
-                    <button
-                      onClick={() => setShowQueueModal(true)}
-                      className="w-full py-2 px-4 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-white/60 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Layers className="w-4 h-4" />
-                      View Queue ({generationQueue.items.length})
-                    </button>
-                  </div>
-                </div>
-
-                {/* Beat Detection */}
-                {audioFile && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                      Beat Detection
-                    </h3>
-                    <div className="space-y-2">
-                      <button
-                        onClick={async () => {
-                          if (!audioFile?.url) return
-                          setIsDetectingBeats(true)
-                          try {
-                            const response = await fetch(audioFile.url)
-                            const buffer = await response.arrayBuffer()
-                            const beats = await detectBeats(buffer)
-                            setBeats(beats)
-                            showToast(`${beats.length} beats detected`, 'success')
-                          } catch {
-                            showToast('Beat detection failed', 'error')
-                          } finally {
-                            setIsDetectingBeats(false)
-                          }
-                        }}
-                        disabled={isDetectingBeats}
-                        className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                      >
-                        {isDetectingBeats ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <AudioLines className="w-4 h-4" />
-                        )}
-                        {isDetectingBeats ? 'Detecting...' : audioFile.beats?.length ? `Re-detect Beats (${audioFile.beats.length})` : 'Detect Beats'}
-                      </button>
-                      {audioFile.beats && audioFile.beats.length > 0 && scenes.length > 0 && (
-                        <button
-                          onClick={() => {
-                            saveToHistory()
-                            let created = 0
-                            for (const scene of scenes) {
-                              const sceneBeats = audioFile.beats!.filter(
-                                (b: number) => b >= scene.startTime && b < scene.endTime
-                              )
-                              if (sceneBeats.length < 2) continue
-                              for (let i = 0; i < sceneBeats.length - 1; i++) {
-                                const start = sceneBeats[i]
-                                const end = sceneBeats[i + 1]
-                                if (end - start >= 0.5) {
-                                  createClip(start, end, undefined, scene.id)
-                                  created++
-                                }
-                              }
-                            }
-                            showToast(`${created} clips created on beats`, 'success')
-                          }}
-                          className="w-full py-2 px-4 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 rounded-lg text-sm font-medium text-yellow-200 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                          Auto-cut on Beats
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Selected clip info */}
-                {selectedClip ? (
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider">
-                        Selected Clip
-                      </h3>
-                      <button
-                        onClick={() => clearSelection()}
-                        className="p-1 hover:bg-white/10 rounded"
-                      >
-                        <X className="w-3 h-3 text-white/40" />
-                      </button>
-                    </div>
-                    <div className="p-3 rounded-lg bg-brand-500/10 border border-brand-500/30">
-                      <p className="font-medium text-sm truncate">{selectedClip.title}</p>
-                      <p className="text-xs text-white/50 mt-1">
-                        {formatTime(selectedClip.startTime)} - {formatTime(selectedClip.endTime)}
-                      </p>
-                      {selectedScene && (
-                        <p className="text-xs text-white/40 mt-1">Scene: {selectedScene.title}</p>
-                      )}
-                    </div>
-
-                    {/* Frame Generation */}
-                    <div className="mt-4">
-                      <h4 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">
-                        Generate Frame
-                      </h4>
-                      <textarea
-                        value={framePrompt}
-                        onChange={(e) => setFramePrompt(e.target.value)}
-                        placeholder="Describe the frame... (e.g., 'Wide shot of singer on rooftop at sunset')"
-                        className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
-                      />
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => {
-                            if (selectedClipId) {
-                              queueFrame(selectedClipId, 'start', framePrompt.trim() || undefined)
-                              showToast('Start frame queued', 'success')
-                            }
-                          }}
-                          disabled={isClipQueued(selectedClipId!, 'frame', 'start')}
-                          className="flex-1 py-2 px-3 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                          {isClipQueued(selectedClipId!, 'frame', 'start') ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-4 h-4" />
-                          )}
-                          {isClipQueued(selectedClipId!, 'frame', 'start') ? 'Queued' : 'Start Frame'}
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (selectedClipId) {
-                              queueFrame(selectedClipId, 'end', framePrompt.trim() || undefined)
-                              showToast('End frame queued', 'success')
-                            }
-                          }}
-                          disabled={isClipQueued(selectedClipId!, 'frame', 'end')}
-                          className="flex-1 py-2 px-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                          {isClipQueued(selectedClipId!, 'frame', 'end') ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-4 h-4" />
-                          )}
-                          {isClipQueued(selectedClipId!, 'frame', 'end') ? 'Queued' : 'End Frame'}
-                        </button>
-                      </div>
-
-                      {/* Upload frames */}
-                      <div className="mt-4">
-                        <p className="text-xs text-white/40 uppercase mb-2">Or Upload</p>
-                        <div className="flex gap-2">
-                          <label className="flex-1 py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/10 border-dashed rounded-lg text-xs text-center cursor-pointer transition-colors">
-                            <Upload className="w-4 h-4 mx-auto mb-1 text-white/40" />
-                            Start
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0]
-                                if (file && selectedClipId) {
-                                  const reader = new FileReader()
-                                  reader.onload = () => {
-                                    const frame: Frame = {
-                                      id: `frame-${selectedClipId}-start-${Date.now()}`,
-                                      clipId: selectedClipId,
-                                      type: 'start',
-                                      source: 'upload',
-                                      url: reader.result as string,
-                                    }
-                                    setFrame(frame)
-                                    updateClip(selectedClipId, { startFrame: frame })
-                                  }
-                                  reader.readAsDataURL(file)
-                                }
-                                e.target.value = ''
-                              }}
-                            />
-                          </label>
-                          <label className="flex-1 py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/10 border-dashed rounded-lg text-xs text-center cursor-pointer transition-colors">
-                            <Upload className="w-4 h-4 mx-auto mb-1 text-white/40" />
-                            End
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0]
-                                if (file && selectedClipId) {
-                                  const reader = new FileReader()
-                                  reader.onload = () => {
-                                    const frame: Frame = {
-                                      id: `frame-${selectedClipId}-end-${Date.now()}`,
-                                      clipId: selectedClipId,
-                                      type: 'end',
-                                      source: 'upload',
-                                      url: reader.result as string,
-                                    }
-                                    setFrame(frame)
-                                    updateClip(selectedClipId, { endFrame: frame })
-                                  }
-                                  reader.readAsDataURL(file)
-                                }
-                                e.target.value = ''
-                              }}
-                            />
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Generated frames preview */}
-                      {(selectedClip.startFrame || selectedClip.endFrame) && (
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          {selectedClip.startFrame && (
-                            <div>
-                              <p className="text-xs text-white/40 mb-1">Start Frame</p>
-                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
-                                <img
-                                  src={typeof selectedClip.startFrame === 'object' ? selectedClip.startFrame.url : ''}
-                                  alt="Start frame"
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            </div>
-                          )}
-                          {selectedClip.endFrame && (
-                            <div>
-                              <p className="text-xs text-white/40 mb-1">End Frame</p>
-                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
-                                <img
-                                  src={typeof selectedClip.endFrame === 'object' ? selectedClip.endFrame.url : ''}
-                                  alt="End frame"
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Video Generation */}
-                      {selectedClip.startFrame && (
-                        <div className="mt-6 pt-4 border-t border-white/10">
-                          <h4 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">
-                            Generate Video
-                          </h4>
-                          <textarea
-                            value={motionPrompt}
-                            onChange={(e) => setMotionPrompt(e.target.value)}
-                            placeholder="Describe the motion... (e.g., 'Camera slowly zooms in, character turns head')"
-                            className="w-full h-16 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
-                          />
-                          <button
-                            onClick={() => {
-                              if (selectedClipId) {
-                                queueVideo(selectedClipId, motionPrompt.trim() || undefined)
-                                showToast('Video queued', 'success')
-                              }
-                            }}
-                            disabled={isClipQueued(selectedClipId!, 'video')}
-                            className="w-full mt-2 py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                          >
-                            {isClipQueued(selectedClipId!, 'video') ? (
-                              <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Queued...
-                              </>
-                            ) : (
-                              <>
-                                <Video className="w-4 h-4" />
-                                Generate Video Clip
-                              </>
-                            )}
-                          </button>
-                          {isClipQueued(selectedClipId!, 'video') && (
-                            <p className="text-xs text-white/40 mt-2 text-center">
-                              Added to queue. Check progress in the queue panel.
-                            </p>
-                          )}
-
-                          {/* Video preview */}
-                          {selectedClipVideo && (
-                            <div className="mt-4">
-                              <p className="text-xs text-white/40 mb-2">Generated Video</p>
-                              <div className="aspect-video rounded-lg overflow-hidden bg-white/5">
-                                <video
-                                  src={typeof selectedClipVideo === 'object' ? selectedClipVideo.url : ''}
-                                  controls
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                      Frame Generation
-                    </h3>
-                    <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <Image className="w-8 h-8 text-white/30 mx-auto mb-2" />
-                      <p className="text-sm text-white/50">Select a clip to generate frames</p>
-                      <p className="text-xs text-white/30 mt-1">Click on a clip in the left panel</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Export (shown when videos exist) */}
-            {currentStep === 'export' && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Export Video
-                </h3>
-                <div className="space-y-4">
-                  {/* Export stats */}
-                  <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                    <p className="text-sm text-white/70">
-                      {clipsWithVideos.length} video clip{clipsWithVideos.length !== 1 ? 's' : ''} ready
-                    </p>
-                    <p className="text-xs text-white/40 mt-1">
-                      Total duration: {formatTime(audioFile?.duration || 0)}
-                    </p>
-                  </div>
-
-                  {/* Platform presets preview */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <p className="text-xs text-white/40">YouTube</p>
-                      <p className="text-sm text-white">1080p</p>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <p className="text-xs text-white/40">TikTok</p>
-                      <p className="text-sm text-white">9:16</p>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <p className="text-xs text-white/40">Instagram</p>
-                      <p className="text-sm text-white">Reels</p>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <p className="text-xs text-white/40">Twitter</p>
-                      <p className="text-sm text-white">720p</p>
-                    </div>
-                  </div>
-
-                  {/* Export button */}
-                  <button
-                    onClick={() => setShowExportDialog(true)}
-                    disabled={clipsWithVideos.length === 0}
-                    className="w-full py-3 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    Export Video
-                  </button>
-
-                  <p className="text-xs text-white/40 text-center">
-                    Choose platform, resolution, and audio options
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Visual style (shown after transcription) */}
-            {transcript.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                  Visual Style
-                </h3>
-                <textarea
-                  value={globalStyle}
-                  onChange={(e) => setGlobalStyle(e.target.value)}
-                  placeholder="Describe the visual style... (e.g., 'Neon-lit cyberpunk city at night')"
-                  className="w-full h-24 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
-                />
-                <p className="text-xs text-white/40 mt-1">
-                  Optional: AI will suggest a style if left blank
-                </p>
-              </div>
-            )}
-
-            {/* Model Settings */}
-            <div>
-              <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
-                AI Models
-              </h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-white/40 block mb-1">Image Generation</label>
-                  <select
-                    value={modelSettings.image}
-                    onChange={(e) => setModelSettings({ image: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
-                  >
-                    {AVAILABLE_MODELS.image.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-white/40 block mb-1">Video Generation</label>
-                  <select
-                    value={modelSettings.video}
-                    onChange={(e) => setModelSettings({ video: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-brand-500"
-                  >
-                    {AVAILABLE_MODELS.video.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name} - {m.description}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
           </div>
         </aside>
         </div>
@@ -1375,8 +1045,57 @@ function StudioPageContent() {
               onStartGeneration={() => {
                 queueAllFrames('both')
                 startQueue()
-                setShowQueueModal(true)
+                setRightPanelTab('queue')
               }}
+              onDetectBeats={async () => {
+                if (!audioFile?.url) return
+                setIsDetectingBeats(true)
+                try {
+                  const response = await fetch(audioFile.url)
+                  const buffer = await response.arrayBuffer()
+                  const beats = await detectBeats(buffer)
+                  setBeats(beats)
+                  showToast(`${beats.length} beats detected`, 'success')
+                } catch {
+                  showToast('Beat detection failed', 'error')
+                } finally {
+                  setIsDetectingBeats(false)
+                }
+              }}
+              isDetectingBeats={isDetectingBeats}
+              onAutoCutBeats={() => {
+                if (!audioFile?.beats || audioFile.beats.length === 0 || scenes.length === 0) return
+                saveToHistory()
+                let created = 0
+                for (const scene of scenes) {
+                  const sceneBeats = audioFile.beats!.filter(
+                    (b: number) => b >= scene.startTime && b < scene.endTime
+                  )
+                  if (sceneBeats.length < 2) continue
+                  for (let i = 0; i < sceneBeats.length - 1; i++) {
+                    const start = sceneBeats[i]
+                    const end = sceneBeats[i + 1]
+                    if (end - start >= 0.5) {
+                      createClip(start, end, undefined, scene.id)
+                      created++
+                    }
+                  }
+                }
+                showToast(`${created} clips created on beats`, 'success')
+              }}
+              canAutoCutBeats={!!(audioFile?.beats && audioFile.beats.length > 0 && scenes.length > 0)}
+              beatCount={audioFile?.beats?.length}
+              onQueueAllFrames={() => {
+                queueAllFrames('both')
+                startQueue()
+                setRightPanelTab('queue')
+              }}
+              onQueueAllVideos={() => {
+                queueAllVideos()
+                startQueue()
+                setRightPanelTab('queue')
+              }}
+              onShowQueue={() => setRightPanelTab('queue')}
             />
           ) : (
             <label
@@ -1415,11 +1134,7 @@ function StudioPageContent() {
         onClose={() => setShowShortcutsModal(false)}
       />
 
-      {/* Generation queue modal */}
-      <GenerationQueue
-        isOpen={showQueueModal}
-        onClose={() => setShowQueueModal(false)}
-      />
+      {/* Generation queue processing is handled by useQueueProcessor() hook */}
 
       {/* Export dialog */}
       <ExportDialog
@@ -1427,11 +1142,7 @@ function StudioPageContent() {
         onClose={() => setShowExportDialog(false)}
       />
 
-      {/* Media library */}
-      <MediaLibraryModal
-        isOpen={showMediaLibrary}
-        onClose={() => setShowMediaLibrary(false)}
-      />
+      {/* Media library is now inline in right sidebar */}
 
       {/* Scene delete confirmation */}
       <ConfirmDialog

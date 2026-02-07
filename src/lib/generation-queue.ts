@@ -1,4 +1,4 @@
-import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementReferenceImage } from '@/types'
+import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementReferenceImage, CameraSettings } from '@/types'
 
 interface ProcessorCallbacks {
   getState: () => {
@@ -10,17 +10,80 @@ interface ProcessorCallbacks {
     modelSettings: { image: string; video: string }
     elements: WorldElement[]
     elementImages: Record<string, ElementReferenceImage>
+    cameraSettings: CameraSettings
   }
   updateQueueItem: (id: string, updates: Partial<QueueItem>) => void
   setFrame: (frame: Frame) => void
   setVideo: (video: GeneratedVideo) => void
   updateClip: (id: string, updates: Partial<{ startFrame: Frame; endFrame: Frame; video: GeneratedVideo }>) => void
   getResolvedElementsForScene: (sceneId: string) => Array<WorldElement & { overrideDescription?: string }>
+  getResolvedCameraSettings: (sceneId?: string) => CameraSettings
   setProcessing: (isProcessing: boolean) => void
 }
 
 const DELAY_BETWEEN_REQUESTS = 500 // ms
 const MAX_RETRIES = 2
+
+const FILM_STOCK_NAMES: Record<string, string> = {
+  'kodak-vision3-500t': 'Kodak Vision3 500T',
+  'kodak-vision3-250d': 'Kodak Vision3 250D',
+  'kodak-vision3-50d': 'Kodak Vision3 50D',
+  'kodak-ektachrome': 'Kodak Ektachrome',
+  'fuji-eterna-500t': 'Fuji Eterna 500T',
+  'fuji-provia': 'Fuji Provia',
+  'ilford-hp5': 'Ilford HP5 black and white',
+  'cinestill-800t': 'CineStill 800T',
+}
+
+const LENS_NAMES: Record<string, string> = {
+  'wide': 'wide-angle lens',
+  'standard': 'standard lens',
+  'portrait': 'portrait lens',
+  'telephoto': 'telephoto lens',
+  'macro': 'macro lens',
+  'anamorphic': 'anamorphic lens',
+}
+
+function buildCameraPrompt(camera: CameraSettings): string {
+  const parts: string[] = []
+  if (camera.cameraType === 'film') {
+    const stock = camera.filmStock
+      ? (camera.filmStock === 'custom' ? camera.customFilmStock : FILM_STOCK_NAMES[camera.filmStock])
+      : null
+    parts.push(stock ? `Shot on film, ${stock}` : 'Shot on film')
+  } else if (camera.cameraType === 'digital') {
+    parts.push('Shot on digital cinema camera')
+  }
+  if (camera.lensType) {
+    const lens = camera.lensType === 'custom'
+      ? camera.customLens
+      : LENS_NAMES[camera.lensType]
+    if (lens) parts.push(lens)
+    if (camera.focalLength) parts.push(camera.focalLength)
+  }
+  if (camera.depthOfField) parts.push(`${camera.depthOfField} depth of field`)
+  if (camera.grainIntensity && camera.grainIntensity !== 'none') parts.push(`${camera.grainIntensity} film grain`)
+  return parts.join(', ')
+}
+
+// Map aspect ratios to what Imagen supports (16:9, 9:16, 1:1, 4:3, 3:4)
+function mapAspectRatioForImage(ratio?: string): string {
+  if (!ratio) return '16:9'
+  switch (ratio) {
+    case '2.39:1': return '16:9' // closest supported
+    default: return ratio
+  }
+}
+
+// Map aspect ratios to what Veo supports (16:9, 9:16)
+function mapAspectRatioForVideo(ratio?: string): string {
+  if (!ratio) return '16:9'
+  switch (ratio) {
+    case '16:9': return '16:9'
+    case '9:16': return '9:16'
+    default: return '16:9' // Veo only supports 16:9 and 9:16
+  }
+}
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -83,6 +146,13 @@ async function generateFrame(
     prompt = parts || `A cinematic frame for "${clip.title}"`
   }
 
+  // Append camera settings to prompt
+  const resolvedCamera = callbacks.getResolvedCameraSettings(scene?.id)
+  const cameraPrompt = buildCameraPrompt(resolvedCamera)
+  if (cameraPrompt) {
+    prompt += `. ${cameraPrompt}`
+  }
+
   // Collect reference images from elements (limit to 3 for API constraints)
   const referenceImages: Array<{ description: string; imageData: string }> = []
   for (const el of resolvedElements.slice(0, 5)) {
@@ -120,6 +190,7 @@ async function generateFrame(
       referenceImages,
       globalStyle: state.globalStyle,
       model: state.modelSettings.image,
+      aspectRatio: mapAspectRatioForImage(resolvedCamera.aspectRatio),
     }),
   })
 
@@ -189,6 +260,13 @@ async function generateVideo(
     description: e.overrideDescription || e.description,
   }))
 
+  // Append camera settings to motion prompt
+  const resolvedCamera = callbacks.getResolvedCameraSettings(scene?.id)
+  const cameraPrompt = buildCameraPrompt(resolvedCamera)
+  if (cameraPrompt) {
+    motionPrompt += `. ${cameraPrompt}`
+  }
+
   // Calculate clip duration for Veo
   const clipDuration = clip.endTime - clip.startTime
 
@@ -212,6 +290,7 @@ async function generateVideo(
       globalStyle: state.globalStyle,
       model: state.modelSettings.video,
       clipDuration, // Pass duration so API can choose appropriate Veo duration
+      aspectRatio: mapAspectRatioForVideo(resolvedCamera.aspectRatio),
     }),
   })
 

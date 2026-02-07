@@ -18,6 +18,7 @@ import type {
   WorldElement,
   ElementCategory,
   ElementReferenceImage,
+  CameraSettings,
 } from '@/types'
 import * as assetCache from '@/lib/asset-cache'
 
@@ -92,6 +93,10 @@ interface ProjectStore {
   // Global
   globalStyle: string
   setGlobalStyle: (style: string) => void
+
+  // Camera settings
+  cameraSettings: CameraSettings
+  setCameraSettings: (settings: Partial<CameraSettings>) => void
 
   // Model settings
   modelSettings: {
@@ -562,6 +567,12 @@ export const useProjectStore = create<ProjectStore>()(
       // Global style
       globalStyle: '',
       setGlobalStyle: (globalStyle) => set({ globalStyle }),
+
+      // Camera settings
+      cameraSettings: {},
+      setCameraSettings: (settings) => set((state) => ({
+        cameraSettings: { ...state.cameraSettings, ...settings },
+      })),
 
       // Model settings
       modelSettings: {
@@ -1101,6 +1112,7 @@ export const useProjectStore = create<ProjectStore>()(
           // Don't persist: startFrame, endFrame, video (large base64 blobs)
         })),
         globalStyle: state.globalStyle,
+        cameraSettings: state.cameraSettings,
         modelSettings: state.modelSettings,
         // Persist timeline zoom only
         timeline: { zoom: state.timeline?.zoom ?? 50 },
@@ -1116,6 +1128,8 @@ export const useProjectStore = create<ProjectStore>()(
           ...persisted,
           // Ensure elements defaults to empty array
           elements: persisted.elements ?? [],
+          // Ensure cameraSettings defaults to empty object
+          cameraSettings: persisted.cameraSettings ?? {},
           // Ensure workflow is properly merged with initial values
           workflow: {
             ...initialWorkflowState,

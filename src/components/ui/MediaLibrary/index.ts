@@ -1,4 +1,5 @@
 export { MediaLibraryModal } from './MediaLibraryModal'
+export { MediaLibraryPanel } from './MediaLibraryPanel'
 export { MediaLibraryFilters } from './MediaLibraryFilters'
 export { MediaLibraryGrid } from './MediaLibraryGrid'
 export { MediaLibraryPreview } from './MediaLibraryPreview'

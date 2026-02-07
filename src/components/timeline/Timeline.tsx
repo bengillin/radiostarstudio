@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
-import { Maximize2, Scissors, Plus, Trash2, Magnet, Play, Pause, Loader2, RotateCcw, Zap, ZapOff } from 'lucide-react'
+import { Maximize2, Scissors, Plus, Trash2, Magnet, Play, Pause, Loader2, RotateCcw, Zap, ZapOff, AudioLines, Sparkles, ChevronDown } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { formatTime } from '@/lib/utils'
 import { WaveformTrack } from './WaveformTrack'
@@ -24,6 +24,16 @@ interface TimelineProps {
   onStartTranscription?: () => void
   onStartPlanning?: () => void
   onStartGeneration?: () => void
+  // Beat detection
+  onDetectBeats?: () => void
+  isDetectingBeats?: boolean
+  onAutoCutBeats?: () => void
+  canAutoCutBeats?: boolean
+  beatCount?: number
+  // Batch generation
+  onQueueAllFrames?: () => void
+  onQueueAllVideos?: () => void
+  onShowQueue?: () => void
 }
 
 const LABEL_WIDTH = 64 // px for track labels
@@ -60,6 +70,14 @@ export function Timeline({
   onStartTranscription,
   onStartPlanning,
   onStartGeneration,
+  onDetectBeats,
+  isDetectingBeats = false,
+  onAutoCutBeats,
+  canAutoCutBeats = false,
+  beatCount,
+  onQueueAllFrames,
+  onQueueAllVideos,
+  onShowQueue,
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const {
@@ -628,13 +646,50 @@ export function Timeline({
               Plan
             </button>
           ) : stage === 'planned' && onStartGeneration ? (
-            <button
-              onClick={onStartGeneration}
-              className="px-2 py-0.5 text-xs bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/50 text-brand-400 rounded flex items-center gap-1 transition-colors"
-            >
-              <Play className="w-3 h-3" />
-              Generate
-            </button>
+            <div className="relative group/gen">
+              <div className="flex">
+                <button
+                  onClick={onStartGeneration}
+                  className="px-2 py-0.5 text-xs bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/50 border-r-0 text-brand-400 rounded-l flex items-center gap-1 transition-colors"
+                >
+                  <Play className="w-3 h-3" />
+                  Generate
+                </button>
+                <button
+                  className="px-1 py-0.5 text-xs bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/50 text-brand-400 rounded-r transition-colors"
+                >
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="absolute top-full left-0 mt-1 min-w-[160px] bg-neutral-900 border border-white/10 rounded-lg shadow-xl z-50 hidden group-hover/gen:block">
+                {onQueueAllFrames && (
+                  <button
+                    onClick={onQueueAllFrames}
+                    className="w-full px-3 py-1.5 text-xs text-left text-white/70 hover:bg-white/10 flex items-center gap-2 transition-colors first:rounded-t-lg"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Generate All Frames
+                  </button>
+                )}
+                {onQueueAllVideos && (
+                  <button
+                    onClick={onQueueAllVideos}
+                    className="w-full px-3 py-1.5 text-xs text-left text-white/70 hover:bg-white/10 flex items-center gap-2 transition-colors"
+                  >
+                    <Play className="w-3 h-3" />
+                    Generate All Videos
+                  </button>
+                )}
+                {onShowQueue && (
+                  <button
+                    onClick={onShowQueue}
+                    className="w-full px-3 py-1.5 text-xs text-left text-white/70 hover:bg-white/10 flex items-center gap-2 transition-colors last:rounded-b-lg border-t border-white/10"
+                  >
+                    View Queue
+                  </button>
+                )}
+              </div>
+            </div>
           ) : stage === 'generating' ? (
             <button
               onClick={() => generationQueue.isPaused ? resumeQueue() : pauseQueue()}
@@ -703,6 +758,36 @@ export function Timeline({
           <Magnet className="w-3 h-3" />
           Snap
         </button>
+
+        {/* Beat detection */}
+        {onDetectBeats && (
+          <button
+            onClick={onDetectBeats}
+            disabled={isDetectingBeats}
+            className={`px-2 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
+              beatCount ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' : 'bg-white/10 hover:bg-white/20'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            title={beatCount ? `${beatCount} beats detected` : 'Detect beats'}
+          >
+            {isDetectingBeats ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <AudioLines className="w-3 h-3" />
+            )}
+            {isDetectingBeats ? 'Detecting...' : beatCount ? `Beats (${beatCount})` : 'Beats'}
+          </button>
+        )}
+        {canAutoCutBeats && onAutoCutBeats && (
+          <button
+            onClick={onAutoCutBeats}
+            className="px-2 py-1 text-xs bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 text-yellow-200 rounded transition-colors flex items-center gap-1"
+            title="Create clips on beat boundaries"
+          >
+            <Sparkles className="w-3 h-3" />
+            Auto-cut
+          </button>
+        )}
+
         <div className="ml-auto text-xs text-white/40 font-mono">
           {formatTime(duration)}
         </div>

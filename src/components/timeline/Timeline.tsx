@@ -32,7 +32,7 @@ const MIN_CLIP_DURATION = 0.5 // minimum clip duration in seconds
 
 interface SnapPoint {
   time: number
-  type: 'clip-start' | 'clip-end' | 'scene-start' | 'scene-end' | 'playhead'
+  type: 'clip-start' | 'clip-end' | 'scene-start' | 'scene-end' | 'playhead' | 'beat'
   sourceId?: string
 }
 
@@ -63,6 +63,7 @@ export function Timeline({
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const {
+    audioFile,
     scenes,
     clips,
     videos,
@@ -150,8 +151,15 @@ export function Timeline({
     // Add playhead
     points.push({ time: currentTime, type: 'playhead' })
 
+    // Add beats
+    if (audioFile?.beats) {
+      for (const beat of audioFile.beats) {
+        points.push({ time: beat, type: 'beat' })
+      }
+    }
+
     return points
-  }, [clips, scenes, currentTime])
+  }, [clips, scenes, currentTime, audioFile?.beats])
 
   // Find nearest snap point
   const findSnapPoint = useCallback((time: number, excludeClipId?: string): number | null => {
@@ -907,6 +915,7 @@ export function Timeline({
               currentTime={currentTime}
               onSeek={onSeek}
               labelWidth={LABEL_WIDTH}
+              beats={audioFile?.beats}
             />
           )}
 

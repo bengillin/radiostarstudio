@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { getActiveProjectId, getStoreKey } from '@/lib/project-manager'
 import type {
   AudioFile,
   TranscriptSegment,
@@ -14,6 +15,9 @@ import type {
   WorkflowState,
   WorkflowStage,
   WorkflowError,
+  WorldElement,
+  ElementCategory,
+  ElementReferenceImage,
 } from '@/types'
 import * as assetCache from '@/lib/asset-cache'
 
@@ -31,6 +35,7 @@ interface ProjectStore {
   // Audio
   audioFile: AudioFile | null
   setAudioFile: (file: AudioFile | null) => void
+  setBeats: (beats: number[]) => void
 
   // Transcript
   transcript: TranscriptSegment[]
@@ -129,6 +134,25 @@ interface ProjectStore {
   setAutoProgress: (enabled: boolean) => void
   clearWorkflowError: () => void
 
+  // World Elements
+  elements: WorldElement[]
+  setElements: (elements: WorldElement[]) => void
+  addElement: (element: WorldElement) => void
+  updateElement: (id: string, updates: Partial<WorldElement>) => void
+  deleteElement: (id: string) => void
+  getElementsByCategory: (category: ElementCategory) => WorldElement[]
+
+  // Element reference images (metadata in state, blobs in IndexedDB)
+  elementImages: Record<string, ElementReferenceImage>
+  setElementImage: (image: ElementReferenceImage) => void
+  deleteElementImage: (imageId: string, elementId: string) => void
+
+  // Scene element references
+  addElementToScene: (sceneId: string, elementId: string) => void
+  removeElementFromScene: (sceneId: string, elementId: string) => void
+  setSceneElementOverride: (sceneId: string, elementId: string, overrideDescription: string | undefined) => void
+  getResolvedElementsForScene: (sceneId: string) => Array<WorldElement & { overrideDescription?: string }>
+
   // Reset
   reset: () => void
 }
@@ -176,6 +200,9 @@ export const useProjectStore = create<ProjectStore>()(
           error: null,
           progress: { transcription: 0, planning: 0, generation: 0 },
         },
+      })),
+      setBeats: (beats) => set((state) => ({
+        audioFile: state.audioFile ? { ...state.audioFile, beats } : null,
       })),
 
       // Transcript
@@ -640,13 +667,28 @@ export const useProjectStore = create<ProjectStore>()(
             }
           }
 
+          // Load element images from IndexedDB
+          const cachedElementImages = await assetCache.getAllElementImages()
+          const elementImagesMap: Record<string, ElementReferenceImage> = {}
+          for (const cached of cachedElementImages) {
+            elementImagesMap[cached.id] = {
+              id: cached.id,
+              elementId: cached.elementId,
+              url: cached.url,
+              source: cached.source,
+              prompt: cached.prompt,
+              createdAt: cached.createdAt,
+            }
+          }
+
           set({
             frames: framesMap,
             videos: videosMap,
+            elementImages: elementImagesMap,
             assetsLoaded: true,
           })
 
-          console.log(`Rehydrated ${cachedFrames.length} frames and ${cachedVideos.length} videos from cache`)
+          console.log(`Rehydrated ${cachedFrames.length} frames, ${cachedVideos.length} videos, ${cachedElementImages.length} element images from cache`)
         } catch (err) {
           console.error('Failed to rehydrate assets from cache:', err)
           set({ assetsLoaded: true })
@@ -834,6 +876,141 @@ export const useProjectStore = create<ProjectStore>()(
         )
       },
 
+      // World Elements
+      elements: [],
+      setElements: (elements) => set({ elements }),
+      addElement: (element) => set((state) => ({
+        elements: [...state.elements, element],
+      })),
+      updateElement: (id, updates) => set((state) => ({
+        elements: state.elements.map((e) =>
+          e.id === id ? { ...e, ...updates, updatedAt: new Date().toISOString() } : e
+        ),
+      })),
+      deleteElement: (id) => {
+        const { scenes } = get()
+        // Remove element and clean up scene references
+        assetCache.deleteElementImagesByElementId(id)
+          .catch((err) => console.error('Failed to delete element images:', err))
+
+        set((state) => ({
+          elements: state.elements.filter((e) => e.id !== id),
+          // Remove element refs from all scenes
+          scenes: state.scenes.map((s) => ({
+            ...s,
+            elementRefs: s.elementRefs?.filter((r) => r.elementId !== id),
+          })),
+          // Remove element images from metadata
+          elementImages: Object.fromEntries(
+            Object.entries(state.elementImages).filter(([, img]) => img.elementId !== id)
+          ),
+        }))
+      },
+      getElementsByCategory: (category) => {
+        return get().elements.filter((e) => e.category === category)
+      },
+
+      // Element reference images
+      elementImages: {},
+      setElementImage: (image) => {
+        // Save to IndexedDB
+        assetCache.saveElementImage({
+          id: image.id,
+          elementId: image.elementId,
+          url: image.url,
+          source: image.source,
+          prompt: image.prompt,
+          createdAt: image.createdAt,
+        }).catch((err) => console.error('Failed to cache element image:', err))
+
+        set((state) => {
+          // Also add to element's referenceImageIds
+          const elements = state.elements.map((e) =>
+            e.id === image.elementId && !e.referenceImageIds.includes(image.id)
+              ? { ...e, referenceImageIds: [...e.referenceImageIds, image.id] }
+              : e
+          )
+          return {
+            elementImages: { ...state.elementImages, [image.id]: image },
+            elements,
+          }
+        })
+      },
+      deleteElementImage: (imageId, elementId) => {
+        assetCache.deleteElementImage(imageId)
+          .catch((err) => console.error('Failed to delete element image:', err))
+
+        set((state) => {
+          const { [imageId]: _, ...rest } = state.elementImages
+          return {
+            elementImages: rest,
+            elements: state.elements.map((e) =>
+              e.id === elementId
+                ? { ...e, referenceImageIds: e.referenceImageIds.filter((id) => id !== imageId) }
+                : e
+            ),
+          }
+        })
+      },
+
+      // Scene element references
+      addElementToScene: (sceneId, elementId) => set((state) => ({
+        scenes: state.scenes.map((s) => {
+          if (s.id !== sceneId) return s
+          const refs = s.elementRefs || []
+          if (refs.some((r) => r.elementId === elementId)) return s
+          return { ...s, elementRefs: [...refs, { elementId }] }
+        }),
+      })),
+      removeElementFromScene: (sceneId, elementId) => set((state) => ({
+        scenes: state.scenes.map((s) => {
+          if (s.id !== sceneId) return s
+          return { ...s, elementRefs: (s.elementRefs || []).filter((r) => r.elementId !== elementId) }
+        }),
+      })),
+      setSceneElementOverride: (sceneId, elementId, overrideDescription) => set((state) => ({
+        scenes: state.scenes.map((s) => {
+          if (s.id !== sceneId) return s
+          return {
+            ...s,
+            elementRefs: (s.elementRefs || []).map((r) =>
+              r.elementId === elementId ? { ...r, overrideDescription } : r
+            ),
+          }
+        }),
+      })),
+      getResolvedElementsForScene: (sceneId) => {
+        const { scenes, elements } = get()
+        const scene = scenes.find((s) => s.id === sceneId)
+        if (!scene) return []
+
+        // If scene has element refs, resolve them
+        if (scene.elementRefs && scene.elementRefs.length > 0) {
+          const resolved: Array<WorldElement & { overrideDescription?: string }> = []
+          for (const ref of scene.elementRefs) {
+            const element = elements.find((e) => e.id === ref.elementId)
+            if (element) {
+              resolved.push({ ...element, overrideDescription: ref.overrideDescription })
+            }
+          }
+          return resolved
+        }
+
+        // Fallback: synthesize virtual elements from legacy 5W fields
+        const virtual: Array<WorldElement & { overrideDescription?: string }> = []
+        const now = new Date().toISOString()
+        if (scene.who?.length) {
+          for (const name of scene.who) {
+            virtual.push({ id: `legacy-who-${name}`, category: 'who', name, description: name, referenceImageIds: [], createdAt: now, updatedAt: now })
+          }
+        }
+        if (scene.what) virtual.push({ id: `legacy-what`, category: 'what', name: scene.what, description: scene.what, referenceImageIds: [], createdAt: now, updatedAt: now })
+        if (scene.when) virtual.push({ id: `legacy-when`, category: 'when', name: scene.when, description: scene.when, referenceImageIds: [], createdAt: now, updatedAt: now })
+        if (scene.where) virtual.push({ id: `legacy-where`, category: 'where', name: scene.where, description: scene.where, referenceImageIds: [], createdAt: now, updatedAt: now })
+        if (scene.why) virtual.push({ id: `legacy-why`, category: 'why', name: scene.why, description: scene.why, referenceImageIds: [], createdAt: now, updatedAt: now })
+        return virtual
+      },
+
       // Workflow
       workflow: initialWorkflowState,
 
@@ -895,6 +1072,8 @@ export const useProjectStore = create<ProjectStore>()(
           clips: [],
           frames: {},
           videos: {},
+          elements: [],
+          elementImages: {},
           timeline: initialTimelineState,
           globalStyle: '',
           // Keep model settings on reset
@@ -911,12 +1090,13 @@ export const useProjectStore = create<ProjectStore>()(
       },
     }),
     {
-      name: 'radiostar-project',
+      name: typeof window !== 'undefined' ? getStoreKey(getActiveProjectId()) : 'radiostar-project-default',
       partialize: (state) => ({
         // Only persist these fields
         project: state.project,
         transcript: state.transcript,
         scenes: state.scenes,
+        elements: state.elements,
         // Strip large assets from clips before persisting
         clips: state.clips.map((clip) => ({
           id: clip.id,
@@ -942,6 +1122,8 @@ export const useProjectStore = create<ProjectStore>()(
         return {
           ...currentState,
           ...persisted,
+          // Ensure elements defaults to empty array
+          elements: persisted.elements ?? [],
           // Ensure workflow is properly merged with initial values
           workflow: {
             ...initialWorkflowState,

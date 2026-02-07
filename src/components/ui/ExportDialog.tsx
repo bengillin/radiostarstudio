@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { X, Download, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { X, Download, Loader2, AlertCircle, CheckCircle, LayoutGrid } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { PLATFORM_PRESETS, getPresetById } from '@/lib/export-presets'
-import { exportVideo, exportSingleClip, downloadBlob, type ExportClip } from '@/lib/ffmpeg-export'
+import { exportVideo, exportSingleClip, exportStoryboardImage, downloadBlob, type ExportClip } from '@/lib/ffmpeg-export'
 import { formatTime } from '@/lib/utils'
 import type { ExportGranularity, ExportAudioOption, PlatformPreset, Clip, GeneratedVideo } from '@/types'
 
@@ -14,12 +14,13 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
-  const { clips, scenes, videos, audioFile, timeline } = useProjectStore()
+  const { clips, scenes, videos, frames, audioFile, timeline } = useProjectStore()
 
   // Export settings
   const [granularity, setGranularity] = useState<ExportGranularity>('timeline')
   const [audioOption, setAudioOption] = useState<ExportAudioOption>('with-audio')
   const [presetId, setPresetId] = useState('youtube')
+  const [crossfade, setCrossfade] = useState<'none' | '0.25' | '0.5' | '1.0'>('none')
 
   // Export state
   const [isExporting, setIsExporting] = useState(false)
@@ -139,6 +140,7 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
           audioUrl,
           preset,
           includeAudio,
+          crossfadeDuration: crossfade !== 'none' ? parseFloat(crossfade) : undefined,
           onProgress,
         })
       }
@@ -281,6 +283,31 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
             </div>
           </div>
 
+          {/* Crossfade (timeline export only) */}
+          {granularity === 'timeline' && clipsWithVideos.length >= 2 && (
+            <div>
+              <label className="text-xs text-white/40 uppercase tracking-wider block mb-2">
+                Crossfade
+              </label>
+              <div className="flex gap-2">
+                {(['none', '0.25', '0.5', '1.0'] as const).map((val) => (
+                  <button
+                    key={val}
+                    onClick={() => setCrossfade(val)}
+                    disabled={isExporting}
+                    className={`flex-1 py-2 px-2 rounded-lg text-xs font-medium transition-colors ${
+                      crossfade === val
+                        ? 'bg-brand-500 text-white'
+                        : 'bg-white/10 text-white/60 hover:bg-white/20'
+                    }`}
+                  >
+                    {val === 'none' ? 'None' : `${val}s`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Duration info */}
           <div className="p-3 bg-white/5 rounded-lg">
             <div className="flex justify-between text-sm">
@@ -348,6 +375,41 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
 
         {/* Actions */}
         <div className="flex justify-end gap-3 p-4 border-t border-white/10">
+          {/* Storyboard export */}
+          {!isExporting && clipsWithVideos.length > 0 && (
+            <button
+              onClick={async () => {
+                setIsExporting(true)
+                setExportStep('Generating storyboard...')
+                try {
+                  const frameData = clips
+                    .sort((a: Clip, b: Clip) => a.startTime - b.startTime)
+                    .map((clip: Clip) => {
+                      const startFrame = clip.startFrame || frames[`frame-${clip.id}-start`]
+                      return {
+                        url: startFrame?.url || '',
+                        title: clip.title,
+                      }
+                    })
+                    .filter((f: { url: string }) => f.url)
+
+                  const blob = await exportStoryboardImage(frameData)
+                  downloadBlob(blob, `radiostar-storyboard-${Date.now()}.jpg`)
+                  setExportSuccess(true)
+                  setExportStep('Storyboard downloaded!')
+                } catch (err) {
+                  setExportError(err instanceof Error ? err.message : 'Storyboard export failed')
+                } finally {
+                  setIsExporting(false)
+                }
+              }}
+              className="px-3 py-2 text-sm font-medium text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2 mr-auto"
+              title="Export storyboard as JPEG grid"
+            >
+              <LayoutGrid className="w-4 h-4" />
+              Storyboard
+            </button>
+          )}
           {!isExporting && (
             <button
               onClick={onClose}

@@ -9,6 +9,7 @@ interface WaveformTrackProps {
   currentTime: number
   onSeek: (time: number) => void
   labelWidth: number // width of track labels
+  beats?: number[]
 }
 
 export function WaveformTrack({
@@ -18,6 +19,7 @@ export function WaveformTrack({
   currentTime,
   onSeek,
   labelWidth,
+  beats,
 }: WaveformTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -109,7 +111,20 @@ export function WaveformTrack({
 
       ctx.fillRect(x + barGap / 2, y, barWidth - barGap, barHeight)
     })
-  }, [waveformData, currentTime, duration, trackWidth])
+
+    // Draw beat markers
+    if (beats && beats.length > 0) {
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.6)' // yellow-400
+      ctx.lineWidth = 1
+      for (const beat of beats) {
+        const x = (beat / duration) * trackWidth
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, height)
+        ctx.stroke()
+      }
+    }
+  }, [waveformData, currentTime, duration, trackWidth, beats])
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || duration <= 0) return

@@ -23,6 +23,7 @@ export function MediaLibraryModal({ isOpen, onClose }: MediaLibraryModalProps) {
     clips,
     deleteFrame,
     deleteVideo,
+    clearAssetCache,
   } = useProjectStore()
 
   // State
@@ -31,7 +32,8 @@ export function MediaLibraryModal({ isOpen, onClose }: MediaLibraryModalProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [previewAsset, setPreviewAsset] = useState<LibraryAsset | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [storageStats, setStorageStats] = useState<{ estimatedSize: string } | null>(null)
+  const [isClearing, setIsClearing] = useState(false)
+  const [storageStats, setStorageStats] = useState<{ frameCount: number; videoCount: number; estimatedSize: string } | null>(null)
 
   // Close on Escape
   useEffect(() => {
@@ -272,11 +274,38 @@ export function MediaLibraryModal({ isOpen, onClose }: MediaLibraryModalProps) {
 
           {/* Footer */}
           <div className="flex items-center justify-between p-4 border-t border-white/10">
-            <div className="text-sm text-white/40">
+            <div className="flex items-center gap-4 text-sm text-white/40">
               {selectedIds.size > 0 ? (
                 <span>{selectedIds.size} selected</span>
               ) : (
                 <span>{filteredAssets.length} asset{filteredAssets.length !== 1 ? 's' : ''}</span>
+              )}
+              {storageStats && (storageStats.frameCount > 0 || storageStats.videoCount > 0) && (
+                <>
+                  <span className="text-white/20">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <HardDrive className="w-3.5 h-3.5" />
+                    <span>{storageStats.frameCount} frames, {storageStats.videoCount} videos ({storageStats.estimatedSize})</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Clear all cached frames and videos? This cannot be undone.')) return
+                      setIsClearing(true)
+                      try {
+                        await clearAssetCache()
+                        assetCache.getStorageStats().then(setStorageStats)
+                      } finally {
+                        setIsClearing(false)
+                      }
+                    }}
+                    disabled={isClearing}
+                    className="flex items-center gap-1 text-white/30 hover:text-red-400 transition-colors disabled:opacity-50"
+                    title="Clear cached assets"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>{isClearing ? 'Clearing...' : 'Clear Cache'}</span>
+                  </button>
+                </>
               )}
             </div>
             <div className="flex items-center gap-3">

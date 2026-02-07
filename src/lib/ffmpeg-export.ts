@@ -60,11 +60,12 @@ export interface ExportOptions {
   audioUrl?: string  // base64 data URL for audio
   preset: PlatformPreset
   includeAudio: boolean
+  crossfadeDuration?: number  // seconds (0.25, 0.5, 1.0) — 0 or undefined = no crossfade
   onProgress?: ExportProgressCallback
 }
 
 export async function exportVideo(options: ExportOptions): Promise<Blob> {
-  const { clips, audioUrl, preset, includeAudio, onProgress } = options
+  const { clips, audioUrl, preset, includeAudio, crossfadeDuration, onProgress } = options
 
   if (clips.length === 0) {
     throw new Error('No clips to export')
@@ -93,10 +94,6 @@ export async function exportVideo(options: ExportOptions): Promise<Blob> {
 
   onProgress?.(40, 'Processing clips...')
 
-  // Create concat file for FFmpeg
-  const concatContent = videoFiles.map(f => `file '${f}'`).join('\n')
-  await ff.writeFile('concat.txt', concatContent)
-
   // Write audio if needed
   if (includeAudio && audioUrl) {
     onProgress?.(45, 'Loading audio...')
@@ -105,50 +102,29 @@ export async function exportVideo(options: ExportOptions): Promise<Blob> {
       await ff.writeFile('audio.mp3', audioData)
     } catch (err) {
       console.error('Failed to load audio:', err)
-      // Continue without audio rather than failing
     }
   }
 
   onProgress?.(50, 'Encoding video...')
 
-  // Build FFmpeg command
   const outputFile = 'output.mp4'
   const { width, height, fps, bitrate } = preset
+  const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`
+
+  const useCrossfade = crossfadeDuration && crossfadeDuration > 0 && clips.length >= 2
 
   try {
-    if (includeAudio && audioUrl) {
-      // Concatenate videos and add audio
-      await ff.exec([
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', 'concat.txt',
-        '-i', 'audio.mp3',
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-b:v', bitrate,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-        '-r', String(fps),
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-shortest',
-        '-y',
-        outputFile
-      ])
+    if (useCrossfade) {
+      // Try xfade filter chain for crossfade transitions
+      try {
+        await exportWithCrossfade(ff, videoFiles, clips, crossfadeDuration, scaleFilter, fps, bitrate, includeAudio && !!audioUrl, outputFile)
+      } catch (xfadeErr) {
+        console.warn('xfade failed, falling back to concat:', xfadeErr)
+        // Fallback to simple concat
+        await exportWithConcat(ff, videoFiles, scaleFilter, fps, bitrate, includeAudio && !!audioUrl, outputFile)
+      }
     } else {
-      // Concatenate videos only
-      await ff.exec([
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', 'concat.txt',
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-b:v', bitrate,
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-        '-r', String(fps),
-        '-an',
-        '-y',
-        outputFile
-      ])
+      await exportWithConcat(ff, videoFiles, scaleFilter, fps, bitrate, includeAudio && !!audioUrl, outputFile)
     }
   } catch (err) {
     console.error('FFmpeg encoding failed:', err)
@@ -267,6 +243,155 @@ export async function exportSingleClip(
   onProgress?.(100, 'Complete!')
 
   return new Blob([outputData as BlobPart], { type: 'video/mp4' })
+}
+
+// Helper: concat-based export (no transitions)
+async function exportWithConcat(
+  ff: FFmpeg,
+  videoFiles: string[],
+  scaleFilter: string,
+  fps: number,
+  bitrate: string,
+  hasAudio: boolean,
+  outputFile: string
+): Promise<void> {
+  const concatContent = videoFiles.map(f => `file '${f}'`).join('\n')
+  await ff.writeFile('concat.txt', concatContent)
+
+  const args = [
+    '-f', 'concat', '-safe', '0', '-i', 'concat.txt',
+    ...(hasAudio ? ['-i', 'audio.mp3'] : []),
+    '-c:v', 'libx264', '-preset', 'fast', '-b:v', bitrate,
+    '-vf', scaleFilter, '-r', String(fps),
+    ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : ['-an']),
+    '-y', outputFile,
+  ]
+  await ff.exec(args)
+}
+
+// Helper: xfade-based export (crossfade transitions)
+async function exportWithCrossfade(
+  ff: FFmpeg,
+  videoFiles: string[],
+  clips: ExportClip[],
+  crossfadeDuration: number,
+  scaleFilter: string,
+  fps: number,
+  bitrate: string,
+  hasAudio: boolean,
+  outputFile: string
+): Promise<void> {
+  // Build input args: -i clip_0.mp4 -i clip_1.mp4 ...
+  const inputArgs: string[] = []
+  for (const file of videoFiles) {
+    inputArgs.push('-i', file)
+  }
+
+  // Build xfade filter chain:
+  // [0:v][1:v]xfade=transition=fade:duration=D:offset=O[v01];
+  // [v01][2:v]xfade=transition=fade:duration=D:offset=O2[v012]; ...
+  const filterParts: string[] = []
+  let cumulativeOffset = 0
+
+  for (let i = 0; i < videoFiles.length - 1; i++) {
+    const clipDuration = clips[i].duration
+    const fadeDur = Math.min(crossfadeDuration, clipDuration * 0.5)
+    cumulativeOffset += clipDuration - fadeDur
+
+    const inputA = i === 0 ? `[0:v]` : `[v${i}]`
+    const inputB = `[${i + 1}:v]`
+    const output = i === videoFiles.length - 2 ? `[vout]` : `[v${i + 1}]`
+
+    filterParts.push(
+      `${inputA}${inputB}xfade=transition=fade:duration=${fadeDur.toFixed(2)}:offset=${cumulativeOffset.toFixed(2)}${output}`
+    )
+  }
+
+  // Add scale filter to the output
+  const filterComplex = filterParts.join(';') + `;[vout]${scaleFilter}[final]`
+
+  const args = [
+    ...inputArgs,
+    '-filter_complex', filterComplex,
+    '-map', '[final]',
+    ...(hasAudio ? ['-i', 'audio.mp3', '-map', `${videoFiles.length}:a`, '-c:a', 'aac', '-b:a', '192k', '-shortest'] : ['-an']),
+    '-c:v', 'libx264', '-preset', 'fast', '-b:v', bitrate,
+    '-r', String(fps),
+    '-y', outputFile,
+  ]
+  await ff.exec(args)
+}
+
+// Export storyboard as a JPEG grid image (canvas-based, no FFmpeg needed)
+export async function exportStoryboardImage(
+  frameUrls: { url: string; title: string }[],
+  columns: number = 4
+): Promise<Blob> {
+  if (frameUrls.length === 0) throw new Error('No frames to export')
+
+  const thumbWidth = 480
+  const thumbHeight = 270 // 16:9
+  const padding = 8
+  const labelHeight = 24
+  const rows = Math.ceil(frameUrls.length / columns)
+
+  const canvasWidth = columns * (thumbWidth + padding) + padding
+  const canvasHeight = rows * (thumbHeight + labelHeight + padding) + padding
+
+  const canvas = document.createElement('canvas')
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#111'
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+
+  // Load and draw each frame
+  for (let i = 0; i < frameUrls.length; i++) {
+    const col = i % columns
+    const row = Math.floor(i / columns)
+    const x = padding + col * (thumbWidth + padding)
+    const y = padding + row * (thumbHeight + labelHeight + padding)
+
+    // Draw frame image
+    try {
+      const img = await loadImage(frameUrls[i].url)
+      ctx.drawImage(img, x, y, thumbWidth, thumbHeight)
+    } catch {
+      // Draw placeholder for failed images
+      ctx.fillStyle = '#222'
+      ctx.fillRect(x, y, thumbWidth, thumbHeight)
+      ctx.fillStyle = '#666'
+      ctx.font = '14px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('No frame', x + thumbWidth / 2, y + thumbHeight / 2)
+    }
+
+    // Draw label
+    ctx.fillStyle = '#000'
+    ctx.fillRect(x, y + thumbHeight, thumbWidth, labelHeight)
+    ctx.fillStyle = '#ccc'
+    ctx.font = '12px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(`#${i + 1} ${frameUrls[i].title}`, x + 6, y + thumbHeight + 16)
+  }
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error('Canvas toBlob failed')),
+      'image/jpeg',
+      0.92
+    )
+  })
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = src
+  })
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import {
   X, ChevronDown, ChevronUp, Image, Video, Sparkles, Clock,
-  Check, Trash2, Play, Users, MapPin, Clapperboard, Heart, Loader2
+  Check, Trash2, Play, Loader2, Clapperboard, Grid2x2
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
+import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
+import { VariationPicker } from '@/components/studio/VariationPicker'
 import { formatTime } from '@/lib/utils'
 import type { Clip, Scene, Frame, GeneratedVideo } from '@/types'
 
@@ -31,10 +33,14 @@ export function DetailPanel({
   const {
     frames,
     videos,
+    globalStyle,
+    modelSettings,
     updateClip,
     updateScene,
+    setFrame,
     getFramesForClip,
     getVideosForClip,
+    getResolvedElementsForScene,
     queueFrame,
     queueVideo,
     isClipQueued,
@@ -46,6 +52,102 @@ export function DetailPanel({
   const isVideoQueued = isClipQueued(clip.id, 'video')
   const [activeTab, setActiveTab] = useState<'frames' | 'video' | 'properties'>('frames')
   const [expandedSection, setExpandedSection] = useState<'start' | 'end' | 'video' | null>('start')
+
+  // Variation picker state
+  const [variationState, setVariationState] = useState<{
+    isOpen: boolean
+    isLoading: boolean
+    frameType: 'start' | 'end'
+    variations: Frame[]
+  }>({ isOpen: false, isLoading: false, frameType: 'start', variations: [] })
+
+  const generateVariations = useCallback(async (frameType: 'start' | 'end') => {
+    setVariationState({ isOpen: true, isLoading: true, frameType, variations: [] })
+
+    try {
+      const resolvedElements = getResolvedElementsForScene(scene.id)
+      const elementsPayload = resolvedElements.map(e => ({
+        category: e.category,
+        name: e.name,
+        description: e.overrideDescription || e.description,
+      }))
+
+      const isImagen = modelSettings.image.startsWith('imagen')
+
+      if (isImagen) {
+        // Single Imagen call with count=4
+        const res = await fetch('/api/generate-frame', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: framePrompt || `Cinematic ${frameType} frame`,
+            clipId: clip.id,
+            type: frameType,
+            scene: { title: scene.title },
+            elements: elementsPayload,
+            globalStyle,
+            model: modelSettings.image,
+            count: 4,
+          }),
+        })
+        const data = await res.json()
+        if (data.frames) {
+          setVariationState(s => ({ ...s, isLoading: false, variations: data.frames }))
+        } else if (data.frame) {
+          setVariationState(s => ({ ...s, isLoading: false, variations: [data.frame] }))
+        } else {
+          setVariationState(s => ({ ...s, isLoading: false }))
+        }
+      } else {
+        // 4 parallel Gemini calls with slight prompt variations
+        const suffixes = [
+          '', // original prompt
+          ' Slightly different angle.',
+          ' Alternative composition.',
+          ' Different lighting.',
+        ]
+        const promises = suffixes.map((suffix, i) =>
+          fetch('/api/generate-frame', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: (framePrompt || `Cinematic ${frameType} frame`) + suffix,
+              clipId: clip.id,
+              type: frameType,
+              scene: { title: scene.title },
+              elements: elementsPayload,
+              globalStyle,
+              model: modelSettings.image,
+            }),
+          }).then(r => r.json()).then(data => {
+            if (data.frame) {
+              // Update as each arrives
+              setVariationState(s => ({ ...s, variations: [...s.variations, data.frame] }))
+            }
+            return data.frame || null
+          }).catch(() => null)
+        )
+        await Promise.all(promises)
+        setVariationState(s => ({ ...s, isLoading: false }))
+      }
+    } catch {
+      setVariationState(s => ({ ...s, isLoading: false }))
+    }
+  }, [clip.id, scene, framePrompt, globalStyle, modelSettings.image, getResolvedElementsForScene])
+
+  const handleVariationSelect = useCallback((frame: Frame) => {
+    // Save all variations as versions
+    for (const v of variationState.variations) {
+      setFrame(v)
+    }
+    // Set selected as active
+    if (frame.type === 'start') {
+      updateClip(clip.id, { startFrame: frame })
+    } else {
+      updateClip(clip.id, { endFrame: frame })
+    }
+    setVariationState({ isOpen: false, isLoading: false, frameType: 'start', variations: [] })
+  }, [variationState.variations, clip.id, setFrame, updateClip])
 
   // Get all versions for this clip
   const startFrames = getFramesForClip(clip.id, 'start')
@@ -188,23 +290,34 @@ export function DetailPanel({
                       placeholder="Describe the start frame..."
                       className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                     />
-                    <button
-                      onClick={() => queueFrame(clip.id, 'start', framePrompt.trim() || undefined)}
-                      disabled={isStartFrameQueued}
-                      className="w-full py-2 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      {isStartFrameQueued ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Queued...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          Generate Start Frame
-                        </>
-                      )}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => queueFrame(clip.id, 'start', framePrompt.trim() || undefined)}
+                        disabled={isStartFrameQueued}
+                        className="flex-1 py-2 px-4 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        {isStartFrameQueued ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Queued...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            Generate
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => generateVariations('start')}
+                        disabled={isStartFrameQueued || variationState.isLoading}
+                        className="py-2 px-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                        title="Generate 4 variations to pick from"
+                      >
+                        <Grid2x2 className="w-4 h-4" />
+                        4x
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -284,23 +397,34 @@ export function DetailPanel({
                       placeholder="Describe the end frame..."
                       className="w-full h-20 p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:border-brand-500"
                     />
-                    <button
-                      onClick={() => queueFrame(clip.id, 'end', framePrompt.trim() || undefined)}
-                      disabled={isEndFrameQueued}
-                      className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      {isEndFrameQueued ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Queued...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          Generate End Frame
-                        </>
-                      )}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => queueFrame(clip.id, 'end', framePrompt.trim() || undefined)}
+                        disabled={isEndFrameQueued}
+                        className="flex-1 py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        {isEndFrameQueued ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Queued...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            Generate
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => generateVariations('end')}
+                        disabled={isEndFrameQueued || variationState.isLoading}
+                        className="py-2 px-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                        title="Generate 4 variations to pick from"
+                      >
+                        <Grid2x2 className="w-4 h-4" />
+                        4x
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -441,80 +565,29 @@ export function DetailPanel({
               <h3 className="text-sm font-medium mb-3">Scene: {scene.title}</h3>
 
               <div className="space-y-3">
-                <div className="flex items-start gap-2">
-                  <Users className="w-4 h-4 text-brand-400 mt-2 flex-shrink-0" />
-                  <div className="flex-1">
-                    <label className="text-xs text-white/40 uppercase block mb-1">Who</label>
-                    <input
-                      type="text"
-                      value={scene.who?.join(', ') || ''}
-                      onChange={(e) => updateScene(scene.id, { who: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                      placeholder="Characters/subjects..."
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <Clapperboard className="w-4 h-4 text-brand-400 mt-2 flex-shrink-0" />
-                  <div className="flex-1">
-                    <label className="text-xs text-white/40 uppercase block mb-1">What</label>
-                    <input
-                      type="text"
-                      value={scene.what || ''}
-                      onChange={(e) => updateScene(scene.id, { what: e.target.value })}
-                      placeholder="Action/event..."
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <Clock className="w-4 h-4 text-brand-400 mt-2 flex-shrink-0" />
-                  <div className="flex-1">
-                    <label className="text-xs text-white/40 uppercase block mb-1">When</label>
-                    <input
-                      type="text"
-                      value={scene.when || ''}
-                      onChange={(e) => updateScene(scene.id, { when: e.target.value })}
-                      placeholder="Time period..."
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <MapPin className="w-4 h-4 text-brand-400 mt-2 flex-shrink-0" />
-                  <div className="flex-1">
-                    <label className="text-xs text-white/40 uppercase block mb-1">Where</label>
-                    <input
-                      type="text"
-                      value={scene.where || ''}
-                      onChange={(e) => updateScene(scene.id, { where: e.target.value })}
-                      placeholder="Location..."
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <Heart className="w-4 h-4 text-brand-400 mt-2 flex-shrink-0" />
-                  <div className="flex-1">
-                    <label className="text-xs text-white/40 uppercase block mb-1">Why</label>
-                    <input
-                      type="text"
-                      value={scene.why || ''}
-                      onChange={(e) => updateScene(scene.id, { why: e.target.value })}
-                      placeholder="Mood/motivation..."
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                </div>
+                {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
+                  <SceneElementSelector
+                    key={category}
+                    sceneId={scene.id}
+                    category={category}
+                  />
+                ))}
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Variation Picker Modal */}
+      {variationState.isOpen && (
+        <VariationPicker
+          variations={variationState.variations}
+          isLoading={variationState.isLoading}
+          expectedCount={4}
+          onSelect={handleVariationSelect}
+          onClose={() => setVariationState({ isOpen: false, isLoading: false, frameType: 'start', variations: [] })}
+        />
+      )}
     </div>
   )
 }

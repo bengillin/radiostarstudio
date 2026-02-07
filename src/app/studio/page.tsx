@@ -5,38 +5,32 @@ import { useRouter } from 'next/navigation'
 import {
   Music, Upload, Layers, Film, Download,
   Play, Pause, Loader2, ChevronRight, ChevronDown, ChevronUp,
-  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video, Keyboard,
-  Plus, Trash2, FolderOpen
+  Users, Clapperboard, Clock, MapPin, Heart, Image, Sparkles, X, Video,
+  Plus, Trash2, FolderOpen, LayoutGrid, Monitor, AudioLines
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { Timeline } from '@/components/timeline'
 import { ToastProvider, useToast } from '@/components/ui/Toast'
 import { KeyboardShortcutsModal } from '@/components/ui/KeyboardShortcutsModal'
-import { StorageIndicator } from '@/components/ui/StorageIndicator'
+import { ProjectSwitcher } from '@/components/ui/ProjectSwitcher'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { GenerationQueue } from '@/components/ui/GenerationQueue'
 import { ExportDialog } from '@/components/ui/ExportDialog'
 import { MediaLibraryModal } from '@/components/ui/MediaLibrary'
 import { DetailPanel } from '@/components/studio/DetailPanel'
+import { ElementsPanel } from '@/components/studio/ElementsPanel'
+import { StoryboardView } from '@/components/studio/StoryboardView'
+import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
 import { useWorkflowAutomation } from '@/hooks/useWorkflowAutomation'
 import { formatTime } from '@/lib/utils'
 import { AVAILABLE_MODELS } from '@/lib/gemini'
-import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo } from '@/types'
-
-type Step = 'upload' | 'transcribe' | 'plan' | 'generate' | 'export'
+import { detectBeats } from '@/lib/beat-detection'
+import type { TranscriptSegment, Scene, Clip, Frame, GeneratedVideo, ElementCategory } from '@/types'
 
 // Veo 3.1 video duration constraints
 const VEO_DURATIONS = [4, 6, 8] as const
 const VEO_MAX_DURATION = 8 // seconds
 const VEO_DEFAULT_DURATION = 8 // Use max for best quality
-
-const STEPS: { id: Step; label: string; icon: typeof Music }[] = [
-  { id: 'upload', label: 'Audio', icon: Upload },
-  { id: 'transcribe', label: 'Transcribe', icon: Music },
-  { id: 'plan', label: 'Plan', icon: Layers },
-  { id: 'generate', label: 'Generate', icon: Film },
-  { id: 'export', label: 'Export', icon: Download },
-]
 
 export default function StudioPage() {
   return (
@@ -88,6 +82,9 @@ function StudioPageContent() {
     saveToHistory,
     undo,
     redo,
+    elements,
+    getResolvedElementsForScene,
+    setBeats,
   } = useProjectStore()
 
   // Workflow automation
@@ -115,7 +112,9 @@ function StudioPageContent() {
   const [showQueueModal, setShowQueueModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showMediaLibrary, setShowMediaLibrary] = useState(false)
-  const [leftPanelTab, setLeftPanelTab] = useState<'lyrics' | 'scenes'>('scenes')
+  const [centerView, setCenterView] = useState<'preview' | 'storyboard'>('preview')
+  const [isDetectingBeats, setIsDetectingBeats] = useState(false)
+  const [leftPanelTab, setLeftPanelTab] = useState<'lyrics' | 'scenes' | 'world'>('scenes')
 
   // Scene/Clip management state
   const [sceneToDelete, setSceneToDelete] = useState<{ id: string; clipCount: number } | null>(null)
@@ -130,7 +129,7 @@ function StudioPageContent() {
   const hasVideos = clipsWithVideos.length > 0
 
   // Determine current step based on state
-  const currentStep: Step = !audioFile
+  const currentStep = !audioFile
     ? 'upload'
     : transcript.length === 0
     ? 'transcribe'
@@ -353,6 +352,13 @@ function StudioPageContent() {
             setShowMediaLibrary(true)
           }
           break
+        case 'KeyB':
+          // B = toggle storyboard view
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            setCenterView(v => v === 'storyboard' ? 'preview' : 'storyboard')
+          }
+          break
       }
     }
 
@@ -375,28 +381,29 @@ function StudioPageContent() {
     const segment = transcript.find((s: TranscriptSegment) => s.id === selectedClip.segmentId)
     const clipText = segment?.text || selectedClip.title
 
-    // Build prompt from scene context
+    // Build prompt from resolved elements
+    const resolvedElements = getResolvedElementsForScene(selectedScene.id)
     const parts: string[] = []
 
-    // Add scene setting
-    if (selectedScene.where) {
-      parts.push(`Setting: ${selectedScene.where}`)
-    }
-    if (selectedScene.when) {
-      parts.push(`Time: ${selectedScene.when}`)
-    }
+    if (resolvedElements.length > 0) {
+      // Group by category
+      const byCategory: Record<string, typeof resolvedElements> = {}
+      for (const el of resolvedElements) {
+        ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
+      }
 
-    // Add characters/subjects
-    if (selectedScene.who && selectedScene.who.length > 0) {
-      parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
-    }
-
-    // Add action/mood
-    if (selectedScene.what) {
-      parts.push(`Action: ${selectedScene.what}`)
-    }
-    if (selectedScene.why) {
-      parts.push(`Mood: ${selectedScene.why}`)
+      if (byCategory.where) parts.push(`Setting: ${byCategory.where.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+      if (byCategory.when) parts.push(`Time: ${byCategory.when.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+      if (byCategory.who) parts.push(`Featuring: ${byCategory.who.map(e => e.name).join(', ')}`)
+      if (byCategory.what) parts.push(`Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+      if (byCategory.why) parts.push(`Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`)
+    } else {
+      // Fallback to legacy fields
+      if (selectedScene.where) parts.push(`Setting: ${selectedScene.where}`)
+      if (selectedScene.when) parts.push(`Time: ${selectedScene.when}`)
+      if (selectedScene.who?.length) parts.push(`Featuring: ${selectedScene.who.join(', ')}`)
+      if (selectedScene.what) parts.push(`Action: ${selectedScene.what}`)
+      if (selectedScene.why) parts.push(`Mood: ${selectedScene.why}`)
     }
 
     // Add the clip's specific content
@@ -411,92 +418,12 @@ function StudioPageContent() {
 
     const autoPrompt = parts.join('. ')
     setFramePrompt(autoPrompt)
-  }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle])
+  }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle, elements, getResolvedElementsForScene])
 
   return (
-    <div className="min-h-screen flex flex-col bg-black">
+    <div className="h-screen flex flex-col bg-black">
       {/* Hidden audio element */}
       {audioFile && <audio ref={audioRef} src={audioFile.url} preload="auto" />}
-
-      {/* Header */}
-      <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center cursor-pointer"
-            onClick={() => router.push('/')}
-          >
-            <Music className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-display font-bold">Radiostar</span>
-        </div>
-
-        {/* Step indicator */}
-        <div className="flex items-center gap-1">
-          {STEPS.map((step, i) => {
-            const Icon = step.icon
-            const isActive = step.id === currentStep
-            const isPast = STEPS.findIndex((s) => s.id === currentStep) > i
-
-            return (
-              <div
-                key={step.id}
-                className={`
-                  flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors
-                  ${isActive ? 'bg-brand-500/20 text-brand-500' : ''}
-                  ${isPast ? 'text-white/60' : ''}
-                  ${!isActive && !isPast ? 'text-white/30' : ''}
-                `}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="hidden md:inline">{step.label}</span>
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="flex items-center gap-4 justify-end">
-          {/* Queue indicator - always visible */}
-          <button
-            onClick={() => setShowQueueModal(true)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
-              generationQueue.items.length > 0
-                ? 'bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30'
-                : 'bg-white/5 hover:bg-white/10 border border-white/10'
-            }`}
-            title="Generation queue (G)"
-          >
-            {generationQueue.isProcessing && !generationQueue.isPaused ? (
-              <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
-            ) : (
-              <Layers className={`w-4 h-4 ${generationQueue.items.length > 0 ? 'text-brand-400' : 'text-white/60'}`} />
-            )}
-            {generationQueue.items.length > 0 ? (
-              <span className="text-brand-400">
-                {generationQueue.items.filter(i => i.status === 'complete').length}/
-                {generationQueue.items.length}
-              </span>
-            ) : (
-              <span className="text-white/60">Queue</span>
-            )}
-          </button>
-          <button
-            onClick={() => setShowMediaLibrary(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-colors"
-            title="Media library (M)"
-          >
-            <FolderOpen className="w-4 h-4 text-white/60" />
-            <span className="text-white/60">Library</span>
-          </button>
-          <StorageIndicator />
-          <button
-            onClick={() => setShowShortcutsModal(true)}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-            title="Keyboard shortcuts (?)"
-          >
-            <Keyboard className="w-4 h-4 text-white/60" />
-          </button>
-        </div>
-      </header>
 
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -504,6 +431,66 @@ function StudioPageContent() {
         <div className="flex-1 flex min-h-0">
           {/* Left panel - Tabbed Properties */}
           <aside className="w-80 border-r border-white/10 flex flex-col flex-shrink-0 min-h-0">
+            {/* Brand + Project Switcher */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 flex-shrink-0">
+              <div
+                className="w-7 h-7 rounded-md bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center cursor-pointer flex-shrink-0"
+                onClick={() => router.push('/')}
+                title="Home"
+              >
+                <Music className="w-3.5 h-3.5 text-white" />
+              </div>
+              <ProjectSwitcher />
+            </div>
+
+            {/* Song */}
+            <div className="px-3 py-2.5 border-b border-white/10 flex-shrink-0">
+              {audioFile ? (
+                <div className="flex items-center gap-3 group">
+                  <button
+                    onClick={togglePlayback}
+                    className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center flex-shrink-0 hover:brightness-110 transition-all shadow-lg shadow-brand-500/20"
+                  >
+                    {isPlaying ? (
+                      <Pause className="w-4 h-4 text-white" />
+                    ) : (
+                      <Play className="w-4 h-4 text-white ml-0.5" />
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{audioFile.name.replace(/\.[^/.]+$/, '')}</p>
+                    <p className="text-[11px] text-white/40">{formatTime(audioFile.duration)}</p>
+                  </div>
+                  <label className="p-1.5 hover:bg-white/10 rounded-md cursor-pointer transition-colors opacity-0 group-hover:opacity-100" title="Replace audio">
+                    <Upload className="w-3.5 h-3.5 text-white/40" />
+                    <input type="file" accept="audio/*" className="hidden" onChange={handleAudioFileSelect} />
+                  </label>
+                </div>
+              ) : (
+                <label
+                  className={`flex items-center gap-3 cursor-pointer rounded-lg p-2 -m-2 transition-colors ${
+                    isDraggingAudio ? 'bg-brand-500/10' : 'hover:bg-white/5'
+                  }`}
+                  onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+                  onDragLeave={() => setIsDraggingAudio(false)}
+                  onDrop={handleAudioDrop}
+                >
+                  <input type="file" accept="audio/*" className="hidden" onChange={handleAudioFileSelect} />
+                  <div className="w-9 h-9 rounded-lg border border-dashed border-white/20 flex items-center justify-center flex-shrink-0">
+                    {isLoadingAudio ? (
+                      <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
+                    ) : (
+                      <Music className="w-4 h-4 text-white/30" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white/50">{isLoadingAudio ? 'Loading...' : 'Add a song'}</p>
+                    <p className="text-[11px] text-white/30">Drop audio or click to browse</p>
+                  </div>
+                </label>
+              )}
+            </div>
+
             {/* Tabs */}
             <div className="flex border-b border-white/10 flex-shrink-0">
               <button
@@ -526,11 +513,23 @@ function StudioPageContent() {
               >
                 Scenes {scenes.length > 0 && `(${scenes.length})`}
               </button>
+              <button
+                onClick={() => setLeftPanelTab('world')}
+                className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                  leftPanelTab === 'world'
+                    ? 'text-brand-400 border-b-2 border-brand-500 bg-brand-500/5'
+                    : 'text-white/50 hover:text-white/70 hover:bg-white/5'
+                }`}
+              >
+                World {elements.length > 0 && `(${elements.length})`}
+              </button>
             </div>
 
             {/* Tab content */}
             <div className="flex-1 overflow-y-auto p-4">
-              {leftPanelTab === 'lyrics' ? (
+              {leftPanelTab === 'world' ? (
+                <ElementsPanel />
+              ) : leftPanelTab === 'lyrics' ? (
                 <div className="space-y-2">
                   {transcript.length === 0 ? (
                     <div className="text-center py-8">
@@ -633,72 +632,14 @@ function StudioPageContent() {
 
                           {isExpanded && (
                             <div className="px-3 pb-3 pt-1 border-t border-white/10 space-y-3">
-                              {/* Editable 5 Ws */}
-                              <div className="flex items-start gap-2">
-                                <Users className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-xs text-white/40 uppercase mb-1">Who</p>
-                                  <input
-                                    type="text"
-                                    value={scene.who?.join(', ') || ''}
-                                    onChange={(e) => updateScene(scene.id, { who: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                                    placeholder="Characters/subjects..."
-                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Clapperboard className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-xs text-white/40 uppercase mb-1">What</p>
-                                  <input
-                                    type="text"
-                                    value={scene.what || ''}
-                                    onChange={(e) => updateScene(scene.id, { what: e.target.value })}
-                                    placeholder="Action/event..."
-                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Clock className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-xs text-white/40 uppercase mb-1">When</p>
-                                  <input
-                                    type="text"
-                                    value={scene.when || ''}
-                                    onChange={(e) => updateScene(scene.id, { when: e.target.value })}
-                                    placeholder="Time period..."
-                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <MapPin className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-xs text-white/40 uppercase mb-1">Where</p>
-                                  <input
-                                    type="text"
-                                    value={scene.where || ''}
-                                    onChange={(e) => updateScene(scene.id, { where: e.target.value })}
-                                    placeholder="Location..."
-                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Heart className="w-3.5 h-3.5 text-brand-400 mt-2 flex-shrink-0" />
-                                <div className="flex-1">
-                                  <p className="text-xs text-white/40 uppercase mb-1">Why</p>
-                                  <input
-                                    type="text"
-                                    value={scene.why || ''}
-                                    onChange={(e) => updateScene(scene.id, { why: e.target.value })}
-                                    placeholder="Mood/motivation..."
-                                    className="w-full px-2 py-1 bg-white/5 border border-white/10 rounded text-sm text-white placeholder-white/30 focus:outline-none focus:border-brand-500"
-                                  />
-                                </div>
-                              </div>
+                              {/* Element selectors for 5 Ws */}
+                              {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
+                                <SceneElementSelector
+                                  key={category}
+                                  sceneId={scene.id}
+                                  category={category}
+                                />
+                              ))}
 
                               {/* Clips in this scene */}
                               <div className="mt-3 pt-3 border-t border-white/10">
@@ -790,13 +731,58 @@ function StudioPageContent() {
                 </div>
               )}
             </div>
+
           </aside>
 
-          {/* Center - Preview */}
+          {/* Center - Preview / Storyboard */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            {/* Preview area or Detail Panel */}
+            {/* View toggle header */}
+            {clips.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCenterView('preview')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      centerView === 'preview'
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/40 hover:text-white/60'
+                    }`}
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                    Preview
+                  </button>
+                  <button
+                    onClick={() => setCenterView('storyboard')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      centerView === 'storyboard'
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/40 hover:text-white/60'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    Storyboard
+                  </button>
+                </div>
+                <span className="text-[10px] text-white/30">B to toggle</span>
+              </div>
+            )}
+
+            {/* Preview area, Detail Panel, or Storyboard */}
             <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-              {selectedClip && selectedScene ? (
+              {centerView === 'storyboard' && clips.length > 0 ? (
+                <div className="w-full h-full">
+                  <StoryboardView
+                    clips={clips}
+                    scenes={scenes}
+                    frames={frames}
+                    selectedClipIds={selectedClipIds}
+                    onSelectClip={(clipId) => {
+                      selectClip(clipId)
+                      setCenterView('preview')
+                    }}
+                  />
+                </div>
+              ) : selectedClip && selectedScene ? (
                 <div className="w-full h-full max-w-4xl">
                   <DetailPanel
                     clip={selectedClip}
@@ -855,7 +841,43 @@ function StudioPageContent() {
           </div>
 
         {/* Right panel - Actions */}
-        <aside className="w-80 border-l border-white/10 p-4 overflow-y-auto flex-shrink-0 min-h-0">
+        <aside className="w-80 border-l border-white/10 flex flex-col flex-shrink-0 min-h-0">
+          {/* Top bar */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 flex-shrink-0">
+            <button
+              onClick={() => setShowMediaLibrary(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/70 hover:bg-white/5 transition-colors"
+              title="Media library (M)"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>Library</span>
+            </button>
+            <button
+              onClick={() => setShowQueueModal(true)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                generationQueue.items.length > 0
+                  ? 'bg-brand-500/20 hover:bg-brand-500/30 border border-brand-500/30'
+                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
+              }`}
+              title="Generation queue (G)"
+            >
+              {generationQueue.isProcessing && !generationQueue.isPaused ? (
+                <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
+              ) : (
+                <Layers className={`w-4 h-4 ${generationQueue.items.length > 0 ? 'text-brand-400' : 'text-white/60'}`} />
+              )}
+              {generationQueue.items.length > 0 ? (
+                <span className="text-brand-400">
+                  {generationQueue.items.filter(i => i.status === 'complete').length}/
+                  {generationQueue.items.length}
+                </span>
+              ) : (
+                <span className="text-white/60">Queue</span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
           <div className="space-y-6">
             {/* Workflow status info - shown during early stages */}
             {(currentStep === 'transcribe' || currentStep === 'plan') && (
@@ -920,6 +942,70 @@ function StudioPageContent() {
                     </button>
                   </div>
                 </div>
+
+                {/* Beat Detection */}
+                {audioFile && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
+                      Beat Detection
+                    </h3>
+                    <div className="space-y-2">
+                      <button
+                        onClick={async () => {
+                          if (!audioFile?.url) return
+                          setIsDetectingBeats(true)
+                          try {
+                            const response = await fetch(audioFile.url)
+                            const buffer = await response.arrayBuffer()
+                            const beats = await detectBeats(buffer)
+                            setBeats(beats)
+                            showToast(`${beats.length} beats detected`, 'success')
+                          } catch {
+                            showToast('Beat detection failed', 'error')
+                          } finally {
+                            setIsDetectingBeats(false)
+                          }
+                        }}
+                        disabled={isDetectingBeats}
+                        className="w-full py-2 px-4 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      >
+                        {isDetectingBeats ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <AudioLines className="w-4 h-4" />
+                        )}
+                        {isDetectingBeats ? 'Detecting...' : audioFile.beats?.length ? `Re-detect Beats (${audioFile.beats.length})` : 'Detect Beats'}
+                      </button>
+                      {audioFile.beats && audioFile.beats.length > 0 && scenes.length > 0 && (
+                        <button
+                          onClick={() => {
+                            saveToHistory()
+                            let created = 0
+                            for (const scene of scenes) {
+                              const sceneBeats = audioFile.beats!.filter(
+                                (b: number) => b >= scene.startTime && b < scene.endTime
+                              )
+                              if (sceneBeats.length < 2) continue
+                              for (let i = 0; i < sceneBeats.length - 1; i++) {
+                                const start = sceneBeats[i]
+                                const end = sceneBeats[i + 1]
+                                if (end - start >= 0.5) {
+                                  createClip(scene.id, start, end)
+                                  created++
+                                }
+                              }
+                            }
+                            showToast(`${created} clips created on beats`, 'success')
+                          }}
+                          className="w-full py-2 px-4 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 rounded-lg text-sm font-medium text-yellow-200 transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          Auto-cut on Beats
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Selected clip info */}
                 {selectedClip ? (
@@ -1262,6 +1348,7 @@ function StudioPageContent() {
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </aside>
         </div>

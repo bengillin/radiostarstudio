@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import { useProjectStore } from '@/store/project-store'
-import type { TranscriptSegment, Scene, Clip } from '@/types'
+import type { TranscriptSegment, Scene, Clip, WorldElement } from '@/types'
 
 interface WorkflowCallbacks {
   onTranscriptionStart?: () => void
@@ -29,6 +29,7 @@ export function useWorkflowAutomation(callbacks?: WorkflowCallbacks) {
     setClips,
     setGlobalStyle,
     globalStyle,
+    setElements,
   } = useProjectStore()
 
   // Track if we've already triggered auto-actions to prevent double-firing
@@ -146,7 +147,35 @@ export function useWorkflowAutomation(callbacks?: WorkflowCallbacks) {
       }
 
       if (data.scenes) {
-        const newScenes = data.scenes as Scene[]
+        // Extract suggested elements and create WorldElement objects
+        const now = new Date().toISOString()
+        const idMap: Record<string, string> = {} // map suggested IDs to real IDs
+
+        if (data.suggestedElements && Array.isArray(data.suggestedElements)) {
+          const newElements: WorldElement[] = data.suggestedElements.map((e: { id?: string; category: string; name: string; description?: string }) => {
+            const realId = `elem-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
+            if (e.id) idMap[e.id] = realId
+            return {
+              id: realId,
+              category: e.category as WorldElement['category'],
+              name: e.name,
+              description: e.description || '',
+              referenceImageIds: [],
+              createdAt: now,
+              updatedAt: now,
+            }
+          })
+          setElements(newElements)
+        }
+
+        // Remap scene elementRefs to use real element IDs
+        const newScenes = (data.scenes as Scene[]).map((scene: Scene) => ({
+          ...scene,
+          elementRefs: scene.elementRefs?.map((ref: { elementId: string; overrideDescription?: string }) => ({
+            ...ref,
+            elementId: idMap[ref.elementId] || ref.elementId,
+          })),
+        }))
         setScenes(newScenes)
 
         // Auto-generate clips from transcript segments
@@ -190,7 +219,7 @@ export function useWorkflowAutomation(callbacks?: WorkflowCallbacks) {
       setWorkflowStage('transcribed')
       callbacks?.onError?.(message)
     }
-  }, [transcript, globalStyle, audioFile?.duration, setScenes, setClips, setWorkflowStage, setWorkflowProgress, setWorkflowError, setGlobalStyle, callbacks])
+  }, [transcript, globalStyle, audioFile?.duration, setScenes, setClips, setElements, setWorkflowStage, setWorkflowProgress, setWorkflowError, setGlobalStyle, callbacks])
 
   // Effect 1: Auto-transcribe when audio is loaded
   useEffect(() => {

@@ -59,16 +59,32 @@ TOTAL DURATION: ${duration || 180} seconds
 
 ${styleInstruction}
 
-Break this song into 3-6 visual scenes. For each scene, define the 5 Ws:
-- WHO: Characters/subjects appearing
-- WHAT: The action or event happening
-- WHEN: Time period or moment (e.g., "sunset", "1980s", "dream sequence")
-- WHERE: Location/setting
-- WHY: Emotional motivation or mood
+Break this song into 3-6 visual scenes. First, define the recurring WORLD ELEMENTS — the characters, locations, time periods, actions, and moods that appear across the video. Then reference these elements in each scene.
+
+For world elements, define:
+- WHO elements: Characters/subjects (give each a name and detailed visual description)
+- WHAT elements: Recurring actions or events
+- WHEN elements: Time periods or moments
+- WHERE elements: Locations/settings (describe in visual detail)
+- WHY elements: Emotional themes or moods
 
 Return ONLY valid JSON (no markdown):
 {
   "globalStyle": "overall visual aesthetic description",
+  "suggestedElements": [
+    {
+      "id": "elem-1",
+      "category": "who",
+      "name": "Lead Singer",
+      "description": "A charismatic woman in her late 20s with short silver hair, wearing a leather jacket and vintage sunglasses"
+    },
+    {
+      "id": "elem-2",
+      "category": "where",
+      "name": "Neon City",
+      "description": "Rain-soaked cyberpunk cityscape at night with holographic billboards and neon reflections on wet pavement"
+    }
+  ],
   "scenes": [
     {
       "id": "scene-1",
@@ -76,7 +92,11 @@ Return ONLY valid JSON (no markdown):
       "description": "Brief description of the scene",
       "startTime": 0,
       "endTime": 30,
-      "who": ["main character", "crowd"],
+      "elementRefs": [
+        { "elementId": "elem-1" },
+        { "elementId": "elem-2" }
+      ],
+      "who": ["Lead Singer"],
       "what": "Character walks through city",
       "when": "Night time, present day",
       "where": "Neon-lit urban street",
@@ -85,7 +105,7 @@ Return ONLY valid JSON (no markdown):
   ]
 }
 
-Keep scenes aligned with the transcript segments. Each scene should cover one or more segments.`,
+Provide detailed visual descriptions for each element so they can be used as generation prompts. Keep the legacy who/what/when/where/why fields on scenes as well. Keep scenes aligned with the transcript segments.`,
             },
           ],
         },

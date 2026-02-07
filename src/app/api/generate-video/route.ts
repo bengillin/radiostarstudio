@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, globalStyle, model, clipDuration } = body
+    const { clipId, startFrameUrl, endFrameUrl, motionPrompt, scene, elements, globalStyle, model, clipDuration } = body
 
     if (!clipId || !startFrameUrl) {
       return NextResponse.json(
@@ -67,14 +67,20 @@ export async function POST(request: NextRequest) {
       console.log('[generate-video] Warning: Invalid end frame URL, proceeding without interpolation')
     }
 
-    // Build motion prompt with scene context
-    const sceneContext = scene ? `
-Scene context:
+    // Build scene context from elements (preferred) or legacy fields
+    let sceneContext = ''
+    if (elements && elements.length > 0) {
+      sceneContext = 'Scene context:\n' +
+        elements.map((e: { category: string; name: string; description: string }) =>
+          `- ${e.category.toUpperCase()}: ${e.name}${e.description ? ` - ${e.description}` : ''}`
+        ).join('\n')
+    } else if (scene) {
+      sceneContext = `Scene context:
 - Setting: ${scene.where || 'unspecified'}
 - Action: ${scene.what || 'unspecified'}
 - Mood: ${scene.why || 'unspecified'}
-- Time: ${scene.when || 'unspecified'}
-` : ''
+- Time: ${scene.when || 'unspecified'}`
+    }
 
     const interpolationNote = endFrame
       ? 'Smoothly interpolate motion from the first frame to the last frame.'

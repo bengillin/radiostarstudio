@@ -30,6 +30,7 @@ const shortcuts = [
     { keys: ['Edge drag'], description: 'Trim clip start/end' },
   ]},
   { category: 'Tools', items: [
+    { keys: ['B'], description: 'Toggle storyboard view' },
     { keys: ['G'], description: 'Open generation queue' },
     { keys: ['M'], description: 'Open media library' },
     { keys: ['⌘', 'E'], description: 'Export video' },

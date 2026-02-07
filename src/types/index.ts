@@ -8,6 +8,7 @@ export interface AudioFile {
   url: string
   duration: number
   waveformData?: number[]
+  beats?: number[]
   file?: File
 }
 
@@ -37,6 +38,37 @@ export type SegmentType =
   | 'spoken'
 
 // ============================================
+// WORLD ELEMENTS (Global 5 Ws Library)
+// ============================================
+
+export type ElementCategory = 'who' | 'what' | 'when' | 'where' | 'why'
+
+export interface ElementReferenceImage {
+  id: string
+  elementId: string
+  url: string              // base64 data URL (stored in IndexedDB)
+  source: 'upload' | 'generated'
+  prompt?: string          // if AI-generated
+  createdAt: string
+}
+
+export interface WorldElement {
+  id: string
+  category: ElementCategory
+  name: string             // e.g., "Lead Singer", "Neon City", "Sunset"
+  description: string      // detailed description for prompt injection
+  referenceImageIds: string[]  // IDs into IndexedDB element-images store
+  color?: string           // optional UI color tag
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SceneElementRef {
+  elementId: string
+  overrideDescription?: string  // scene-level override of the element description
+}
+
+// ============================================
 // SCENES & CLIPS
 // ============================================
 
@@ -49,12 +81,15 @@ export interface Scene {
   clips: Clip[]
   order: number
 
-  // The 5 Ws - narrative planning
+  // Legacy 5 Ws - kept for backward compatibility
   who: string[]
   what: string
   when: string
   where: string
   why: string
+
+  // Global element references (new system)
+  elementRefs?: SceneElementRef[]
 
   // Visual direction
   aesthetic: VisualAesthetic
@@ -216,6 +251,7 @@ export interface EnhancedExportSettings {
   audioOption: ExportAudioOption
   sceneMode: SceneExportMode
   preset: string | 'custom'
+  crossfade?: 'none' | '0.25' | '0.5' | '1.0'
   customSettings?: {
     resolution: '720p' | '1080p' | '4k'
     fps: 24 | 30 | 60
@@ -243,6 +279,7 @@ export interface TranscriptionResponse {
 export interface ScenePlanResponse {
   scenes: Omit<Scene, 'clips'>[]
   globalStyle: string
+  suggestedElements?: Omit<WorldElement, 'referenceImageIds' | 'createdAt' | 'updatedAt'>[]
 }
 
 // ============================================

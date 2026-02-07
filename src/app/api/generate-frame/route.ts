@@ -16,7 +16,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { prompt, clipId, type, scene, globalStyle, model } = body
+    const { prompt, clipId, type, scene, globalStyle, model, elements, referenceImages, count } = body
+    const frameCount = Math.min(Math.max(count || 1, 1), 4)
 
     if (!prompt) {
       return NextResponse.json(
@@ -26,18 +27,24 @@ export async function POST(request: NextRequest) {
     }
 
     const imageModel = model || 'imagen-4.0-generate-001'
-    console.log('[generate-frame] Generating frame for clip:', clipId, 'type:', type, 'model:', imageModel)
+    console.log('[generate-frame] Generating frame for clip:', clipId, 'type:', type, 'model:', imageModel, 'count:', frameCount)
     console.log('[generate-frame] Prompt:', prompt.substring(0, 100) + '...')
 
-    // Build a rich prompt incorporating scene context
-    const sceneContext = scene ? `
-Scene: ${scene.title}
+    // Build scene context from elements (preferred) or legacy fields
+    let sceneContext = ''
+    if (elements && elements.length > 0) {
+      sceneContext = `Scene: ${scene?.title || 'Untitled'}\n` +
+        elements.map((e: { category: string; name: string; description: string }) =>
+          `- ${e.category.toUpperCase()}: ${e.name}${e.description ? ` - ${e.description}` : ''}`
+        ).join('\n')
+    } else if (scene) {
+      sceneContext = `Scene: ${scene.title}
 - Who: ${scene.who?.join(', ') || 'unspecified'}
 - What: ${scene.what || 'unspecified'}
 - When: ${scene.when || 'unspecified'}
 - Where: ${scene.where || 'unspecified'}
-- Why/Mood: ${scene.why || 'unspecified'}
-` : ''
+- Why/Mood: ${scene.why || 'unspecified'}`
+    }
 
     const fullPrompt = `Cinematic frame for a music video. ${sceneContext} Visual Style: ${globalStyle || 'cinematic, high quality'}. Frame: ${prompt}. 16:9 aspect ratio, cinematic composition, rich detail and lighting.`
 
@@ -54,7 +61,7 @@ Scene: ${scene.title}
         instances: [{ prompt: fullPrompt }],
         parameters: {
           outputMimeType: 'image/jpeg',
-          sampleCount: 1,
+          sampleCount: frameCount,
           personGeneration: 'ALLOW_ADULT',
           aspectRatio: '16:9',
         },
@@ -88,25 +95,34 @@ Scene: ${scene.title}
         throw new Error(data.error?.message || 'Imagen API failed')
       }
 
-      // Try different response structures
-      const base64Data = data.predictions?.[0]?.bytesBase64Encoded
-        || data.predictions?.[0]?.image?.bytesBase64Encoded
-        || data.images?.[0]?.bytesBase64Encoded
-      if (base64Data) {
-        const imageData = `data:image/jpeg;base64,${base64Data}`
-        console.log('[generate-frame] Image generated successfully with Imagen')
-        return NextResponse.json({
-          success: true,
-          frame: {
-            id: `frame-${clipId}-${type}-${Date.now()}`,
+      // Parse all predictions into frames
+      const predictions = data.predictions || data.images || []
+      const generatedFrames = []
+      const now = Date.now()
+
+      for (let i = 0; i < predictions.length; i++) {
+        const pred = predictions[i]
+        const base64Data = pred?.bytesBase64Encoded || pred?.image?.bytesBase64Encoded
+        if (base64Data) {
+          generatedFrames.push({
+            id: `frame-${clipId}-${type}-${now}-${i}`,
             clipId,
             type,
             source: 'generated',
-            url: imageData,
+            url: `data:image/jpeg;base64,${base64Data}`,
             prompt,
             generatedAt: new Date().toISOString(),
             model: imageModel,
-          },
+          })
+        }
+      }
+
+      if (generatedFrames.length > 0) {
+        console.log(`[generate-frame] ${generatedFrames.length} image(s) generated with Imagen`)
+        return NextResponse.json({
+          success: true,
+          frame: generatedFrames[0], // backward compat
+          frames: generatedFrames,
         })
       }
 
@@ -117,9 +133,31 @@ Scene: ${scene.title}
     console.log('[generate-frame] Using Gemini API')
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
+    // Build content parts with reference images for visual consistency
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const contentParts: any[] = [{ text: fullPrompt }]
+
+    if (referenceImages && referenceImages.length > 0) {
+      for (const ref of referenceImages) {
+        if (ref.imageData) {
+          // Parse data URL: data:image/jpeg;base64,/9j/4AAQ...
+          const match = ref.imageData.match(/^data:([^;]+);base64,(.+)$/)
+          if (match) {
+            contentParts.push({
+              inlineData: {
+                mimeType: match[1],
+                data: match[2],
+              },
+            })
+            contentParts.push({ text: `Reference image for "${ref.description}" — maintain visual consistency with this reference.` })
+          }
+        }
+      }
+    }
+
     const response = await ai.models.generateContent({
       model: imageModel,
-      contents: [{ parts: [{ text: fullPrompt }] }],
+      contents: [{ parts: contentParts }],
       config: {
         responseModalities: ['image', 'text'],
         imageConfig: {

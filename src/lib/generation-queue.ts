@@ -1,4 +1,4 @@
-import type { QueueItem, Scene, Frame, GeneratedVideo } from '@/types'
+import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementReferenceImage } from '@/types'
 
 interface ProcessorCallbacks {
   getState: () => {
@@ -8,11 +8,14 @@ interface ProcessorCallbacks {
     frames: Record<string, Frame>
     globalStyle: string
     modelSettings: { image: string; video: string }
+    elements: WorldElement[]
+    elementImages: Record<string, ElementReferenceImage>
   }
   updateQueueItem: (id: string, updates: Partial<QueueItem>) => void
   setFrame: (frame: Frame) => void
   setVideo: (video: GeneratedVideo) => void
   updateClip: (id: string, updates: Partial<{ startFrame: Frame; endFrame: Frame; video: GeneratedVideo }>) => void
+  getResolvedElementsForScene: (sceneId: string) => Array<WorldElement & { overrideDescription?: string }>
 }
 
 const DELAY_BETWEEN_REQUESTS = 500 // ms
@@ -36,11 +39,30 @@ async function generateFrame(
     throw new Error('Clip or scene not found')
   }
 
-  // Use custom prompt if provided, otherwise build from scene context
+  // Resolve elements for this scene
+  const resolvedElements = callbacks.getResolvedElementsForScene(scene.id)
+
+  // Use custom prompt if provided, otherwise build from resolved elements
   let prompt: string
   if (customPrompt) {
     prompt = customPrompt
+  } else if (resolvedElements.length > 0) {
+    const byCategory: Record<string, typeof resolvedElements> = {}
+    for (const el of resolvedElements) {
+      ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
+    }
+    const parts = [
+      byCategory.where && `Setting: ${byCategory.where.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      byCategory.when && `Time: ${byCategory.when.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      byCategory.who && `Characters: ${byCategory.who.map(e => `${e.name}${e.description ? ` (${e.overrideDescription || e.description})` : ''}`).join(', ')}`,
+      byCategory.what && `Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      byCategory.why && `Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      state.globalStyle && `Style: ${state.globalStyle}`,
+      frameType === 'end' && 'This is the ending frame of the scene.',
+    ].filter(Boolean).join('. ')
+    prompt = parts || `A cinematic frame for "${clip.title}"`
   } else {
+    // Legacy fallback
     const parts = [
       scene.where && `Setting: ${scene.where}`,
       scene.when && `Time: ${scene.when}`,
@@ -52,6 +74,24 @@ async function generateFrame(
     ].filter(Boolean).join('. ')
     prompt = parts || `A cinematic frame for "${clip.title}"`
   }
+
+  // Collect reference images from elements (limit to 3 for API constraints)
+  const referenceImages: Array<{ description: string; imageData: string }> = []
+  for (const el of resolvedElements.slice(0, 5)) {
+    for (const imgId of el.referenceImageIds.slice(0, 1)) { // 1 image per element
+      const img = state.elementImages[imgId]
+      if (img?.url && referenceImages.length < 3) {
+        referenceImages.push({ description: `${el.name} (${el.category})`, imageData: img.url })
+      }
+    }
+  }
+
+  // Build element context for the API
+  const elementContext = resolvedElements.map(e => ({
+    category: e.category,
+    name: e.name,
+    description: e.overrideDescription || e.description,
+  }))
 
   const response = await fetch('/api/generate-frame', {
     method: 'POST',
@@ -68,6 +108,8 @@ async function generateFrame(
         where: scene.where,
         why: scene.why,
       },
+      elements: elementContext,
+      referenceImages,
       globalStyle: state.globalStyle,
       model: state.modelSettings.image,
     }),
@@ -107,12 +149,37 @@ async function generateVideo(
     throw new Error('Start frame required for video generation')
   }
 
-  // Use custom motion prompt if provided, otherwise build from scene context
-  const motionPrompt = customMotionPrompt || [
-    scene?.what && `Action: ${scene.what}`,
-    scene?.why && `Mood: ${scene.why}`,
-    'Smooth cinematic motion',
-  ].filter(Boolean).join('. ')
+  // Resolve elements for motion prompt
+  const resolvedElements = scene ? callbacks.getResolvedElementsForScene(scene.id) : []
+
+  // Use custom motion prompt if provided, otherwise build from resolved elements
+  let motionPrompt: string
+  if (customMotionPrompt) {
+    motionPrompt = customMotionPrompt
+  } else if (resolvedElements.length > 0) {
+    const byCategory: Record<string, typeof resolvedElements> = {}
+    for (const el of resolvedElements) {
+      ;(byCategory[el.category] = byCategory[el.category] || []).push(el)
+    }
+    motionPrompt = [
+      byCategory.what && `Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      byCategory.why && `Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      'Smooth cinematic motion',
+    ].filter(Boolean).join('. ')
+  } else {
+    motionPrompt = [
+      scene?.what && `Action: ${scene.what}`,
+      scene?.why && `Mood: ${scene.why}`,
+      'Smooth cinematic motion',
+    ].filter(Boolean).join('. ')
+  }
+
+  // Build element context for the API
+  const elementContext = resolvedElements.map(e => ({
+    category: e.category,
+    name: e.name,
+    description: e.overrideDescription || e.description,
+  }))
 
   // Calculate clip duration for Veo
   const clipDuration = clip.endTime - clip.startTime
@@ -133,6 +200,7 @@ async function generateVideo(
         where: scene.where,
         why: scene.why,
       } : undefined,
+      elements: elementContext,
       globalStyle: state.globalStyle,
       model: state.modelSettings.video,
       clipDuration, // Pass duration so API can choose appropriate Veo duration

@@ -5,12 +5,14 @@
  * while metadata stays in Zustand/localStorage
  */
 
-const DB_NAME = 'radiostar-assets'
-const DB_VERSION = 2
+import { getActiveProjectId, getDbName } from './project-manager'
+
+const DB_VERSION = 3
 const FRAMES_STORE = 'frames'
 const VIDEOS_STORE = 'videos'
 const REFERENCES_STORE = 'references'
 const AUDIO_STORE = 'audio'
+const ELEMENT_IMAGES_STORE = 'element-images'
 
 interface CachedFrame {
   id: string
@@ -56,16 +58,34 @@ interface CachedAudio {
   uploadedAt: string
 }
 
+interface CachedElementImage {
+  id: string
+  elementId: string
+  url: string // base64 data URL
+  source: 'upload' | 'generated'
+  prompt?: string
+  createdAt: string
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null
+let currentDbName: string | null = null
 
 /**
- * Initialize and get the IndexedDB database
+ * Initialize and get the IndexedDB database (scoped to active project)
  */
 function getDB(): Promise<IDBDatabase> {
+  const dbName = getDbName(getActiveProjectId())
+
+  // If project changed (shouldn't happen without reload, but safety), reset
+  if (currentDbName && currentDbName !== dbName) {
+    dbPromise = null
+  }
+
   if (dbPromise) return dbPromise
+  currentDbName = dbName
 
   dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    const request = indexedDB.open(dbName, DB_VERSION)
 
     request.onerror = () => {
       console.error('Failed to open IndexedDB:', request.error)
@@ -105,6 +125,14 @@ function getDB(): Promise<IDBDatabase> {
         // Create audio store
         if (!db.objectStoreNames.contains(AUDIO_STORE)) {
           db.createObjectStore(AUDIO_STORE, { keyPath: 'id' })
+        }
+      }
+
+      // v3: Add element images store
+      if (oldVersion < 3) {
+        if (!db.objectStoreNames.contains(ELEMENT_IMAGES_STORE)) {
+          const store = db.createObjectStore(ELEMENT_IMAGES_STORE, { keyPath: 'id' })
+          store.createIndex('elementId', 'elementId', { unique: false })
         }
       }
     }
@@ -462,6 +490,109 @@ export async function deleteAudio(id: string): Promise<void> {
 }
 
 // ============================================
+// ELEMENT IMAGE OPERATIONS
+// ============================================
+
+/**
+ * Save an element reference image to IndexedDB
+ */
+export async function saveElementImage(image: CachedElementImage): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readwrite')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+    const request = store.put(image)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get an element image by ID
+ */
+export async function getElementImage(id: string): Promise<CachedElementImage | null> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readonly')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+    const request = store.get(id)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get all element images for a specific element
+ */
+export async function getElementImagesByElementId(elementId: string): Promise<CachedElementImage[]> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readonly')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+    const index = store.index('elementId')
+    const request = index.getAll(elementId)
+    request.onsuccess = () => resolve(request.result || [])
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Get all element images
+ */
+export async function getAllElementImages(): Promise<CachedElementImage[]> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readonly')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+    const request = store.getAll()
+    request.onsuccess = () => resolve(request.result || [])
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Delete an element image by ID
+ */
+export async function deleteElementImage(id: string): Promise<void> {
+  const db = await getDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readwrite')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+    const request = store.delete(id)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Delete all images for an element
+ */
+export async function deleteElementImagesByElementId(elementId: string): Promise<void> {
+  const images = await getElementImagesByElementId(elementId)
+  const db = await getDB()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ELEMENT_IMAGES_STORE, 'readwrite')
+    const store = transaction.objectStore(ELEMENT_IMAGES_STORE)
+
+    let remaining = images.length
+    if (remaining === 0) {
+      resolve()
+      return
+    }
+
+    for (const image of images) {
+      const request = store.delete(image.id)
+      request.onsuccess = () => {
+        remaining--
+        if (remaining === 0) resolve()
+      }
+      request.onerror = () => reject(request.error)
+    }
+  })
+}
+
+// ============================================
 // UTILITY OPERATIONS
 // ============================================
 
@@ -473,11 +604,11 @@ export async function clearAllAssets(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(
-      [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE],
+      [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE, ELEMENT_IMAGES_STORE],
       'readwrite'
     )
 
-    const stores = [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE]
+    const stores = [FRAMES_STORE, VIDEOS_STORE, REFERENCES_STORE, AUDIO_STORE, ELEMENT_IMAGES_STORE]
     let completed = 0
 
     const checkComplete = () => {
@@ -517,24 +648,28 @@ export async function getStorageStats(): Promise<{
   videoCount: number
   referenceCount: number
   audioCount: number
+  elementImageCount: number
   estimatedSize: string
   breakdown: {
     frames: string
     videos: string
     references: string
     audio: string
+    elementImages: string
   }
 }> {
   const frames = await getAllFrames()
   const videos = await getAllVideos()
   const references = await getAllReferences()
   const audioFiles = await getAllAudio()
+  const elementImages = await getAllElementImages()
 
   // Estimate size from base64 strings (base64 is ~33% larger than binary)
   let frameBytes = 0
   let videoBytes = 0
   let referenceBytes = 0
   let audioBytes = 0
+  let elementImageBytes = 0
 
   for (const frame of frames) {
     if (frame.url) {
@@ -560,19 +695,27 @@ export async function getStorageStats(): Promise<{
     }
   }
 
-  const totalBytes = frameBytes + videoBytes + referenceBytes + audioBytes
+  for (const img of elementImages) {
+    if (img.url) {
+      elementImageBytes += (img.url.length * 0.75)
+    }
+  }
+
+  const totalBytes = frameBytes + videoBytes + referenceBytes + audioBytes + elementImageBytes
 
   return {
     frameCount: frames.length,
     videoCount: videos.length,
     referenceCount: references.length,
     audioCount: audioFiles.length,
+    elementImageCount: elementImages.length,
     estimatedSize: formatBytes(totalBytes),
     breakdown: {
       frames: formatBytes(frameBytes),
       videos: formatBytes(videoBytes),
       references: formatBytes(referenceBytes),
       audio: formatBytes(audioBytes),
+      elementImages: formatBytes(elementImageBytes),
     },
   }
 }

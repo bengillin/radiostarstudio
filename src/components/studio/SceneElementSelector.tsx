@@ -103,9 +103,9 @@ export function SceneElementSelector({ sceneId, category }: Props) {
 
             return (
               <div key={ref.elementId} className="relative">
-                <button
+                <span
                   onClick={() => setOverrideElement(isOverriding ? null : ref.elementId)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors cursor-pointer ${
                     ref.overrideDescription
                       ? `${config.bgColor} ${config.color} ring-1 ring-current/30`
                       : `${config.bgColor} ${config.color}`
@@ -125,7 +125,7 @@ export function SceneElementSelector({ sceneId, category }: Props) {
                   >
                     <X className="w-3 h-3" />
                   </button>
-                </button>
+                </span>
 
                 {/* Override popover */}
                 {isOverriding && (

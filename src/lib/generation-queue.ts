@@ -16,6 +16,7 @@ interface ProcessorCallbacks {
   setVideo: (video: GeneratedVideo) => void
   updateClip: (id: string, updates: Partial<{ startFrame: Frame; endFrame: Frame; video: GeneratedVideo }>) => void
   getResolvedElementsForScene: (sceneId: string) => Array<WorldElement & { overrideDescription?: string }>
+  setProcessing: (isProcessing: boolean) => void
 }
 
 const DELAY_BETWEEN_REQUESTS = 500 // ms
@@ -300,7 +301,8 @@ export async function processQueue(callbacks: ProcessorCallbacks): Promise<void>
   const pendingItem = generationQueue.items.find(item => item.status === 'pending')
 
   if (!pendingItem) {
-    // No more items to process
+    // No more items — mark queue as idle so new items can re-trigger processing
+    callbacks.setProcessing(false)
     return
   }
 
@@ -317,6 +319,8 @@ export async function processQueue(callbacks: ProcessorCallbacks): Promise<void>
     if (hasMorePending) {
       // Process next item
       await processQueue(callbacks)
+    } else {
+      callbacks.setProcessing(false)
     }
   }
 }

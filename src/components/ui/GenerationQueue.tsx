@@ -51,6 +51,9 @@ export function GenerationQueue({ isOpen, onClose }: GenerationQueueProps) {
         setVideo,
         updateClip,
         getResolvedElementsForScene: (sceneId: string) => useProjectStore.getState().getResolvedElementsForScene(sceneId),
+        setProcessing: (isProcessing: boolean) => useProjectStore.setState((state) => ({
+          generationQueue: { ...state.generationQueue, isProcessing },
+        })),
       }
       processQueue(callbacks)
     }

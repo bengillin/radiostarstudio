@@ -2,19 +2,10 @@
 
 import { useState, useRef, useCallback } from 'react'
 import {
-  Users, Clapperboard, Clock, MapPin, Heart,
   Upload, Trash2, X, Image as ImageIcon,
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
-import type { ElementCategory } from '@/types'
-
-const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: typeof Users; color: string }> = {
-  who: { label: 'Who', icon: Users, color: 'text-blue-400' },
-  what: { label: 'What', icon: Clapperboard, color: 'text-orange-400' },
-  when: { label: 'When', icon: Clock, color: 'text-yellow-400' },
-  where: { label: 'Where', icon: MapPin, color: 'text-green-400' },
-  why: { label: 'Why', icon: Heart, color: 'text-pink-400' },
-}
+import { CATEGORY_CONFIG } from '@/lib/category-config'
 
 interface WorldElementDetailViewProps {
   elementId: string

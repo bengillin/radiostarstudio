@@ -1,23 +1,13 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo, useCallback } from 'react'
 import {
-  Users, Clapperboard, Clock, MapPin, Heart,
   Plus, Trash2, ChevronDown, ChevronUp, Upload,
   Sparkles, X, Image as ImageIcon,
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
+import { CATEGORY_CONFIG, CATEGORIES } from '@/lib/category-config'
 import type { ElementCategory, WorldElement } from '@/types'
-
-const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: typeof Users; color: string; placeholder: string }> = {
-  who: { label: 'Who', icon: Users, color: 'text-blue-400', placeholder: 'e.g. Lead singer, mysterious stranger...' },
-  what: { label: 'What', icon: Clapperboard, color: 'text-orange-400', placeholder: 'e.g. Walking through rain, dancing...' },
-  when: { label: 'When', icon: Clock, color: 'text-yellow-400', placeholder: 'e.g. Sunset, 1980s, dream sequence...' },
-  where: { label: 'Where', icon: MapPin, color: 'text-green-400', placeholder: 'e.g. Neon-lit city, abandoned warehouse...' },
-  why: { label: 'Why', icon: Heart, color: 'text-pink-400', placeholder: 'e.g. Longing, rebellion, euphoria...' },
-}
-
-const CATEGORIES: ElementCategory[] = ['who', 'what', 'when', 'where', 'why']
 
 interface ElementsPanelProps {
   onSelectElement?: (id: string) => void
@@ -43,11 +33,18 @@ export function ElementsPanel({ onSelectElement, selectedElementId, globalStyle,
 
   const filtered = filter === 'all' ? elements : elements.filter((e) => e.category === filter)
 
-  const getUsageCount = (elementId: string) => {
-    return scenes.filter((s) =>
-      s.elementRefs?.some((r) => r.elementId === elementId)
-    ).length
-  }
+  // Memoize usage counts for all elements to avoid O(n*m) per render
+  const usageCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const element of elements) {
+      counts[element.id] = scenes.filter((s) =>
+        s.elementRefs?.some((r) => r.elementId === element.id)
+      ).length
+    }
+    return counts
+  }, [elements, scenes])
+
+  const getUsageCount = useCallback((elementId: string) => usageCounts[elementId] ?? 0, [usageCounts])
 
   const handleCreate = () => {
     if (!creatingCategory || !newName.trim()) return

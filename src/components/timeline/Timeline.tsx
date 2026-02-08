@@ -84,6 +84,7 @@ export function Timeline({
     audioFile,
     scenes,
     clips,
+    frames,
     videos,
     timeline,
     setTimeline,
@@ -846,6 +847,9 @@ export function Timeline({
 
               {clips.map((clip: Clip) => {
                 const hasVideo = clip.video || videos[`video-${clip.id}`]
+                const hasStartFrame = clip.startFrame || Object.values(frames).some((f: any) => f.clipId === clip.id && f.type === 'start')
+                const isFrameQueued = generationQueue.items.some(i => i.clipId === clip.id && i.type === 'frame' && (i.status === 'pending' || i.status === 'processing'))
+                const isVideoQueued = generationQueue.items.some(i => i.clipId === clip.id && i.type === 'video' && (i.status === 'pending' || i.status === 'processing'))
                 const isSelected = selectedClipIds.includes(clip.id)
                 const isHoveredStart = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'start'
                 const isHoveredEnd = hoveredEdge?.clipId === clip.id && hoveredEdge?.edge === 'end'
@@ -929,6 +933,12 @@ export function Timeline({
                     )}
                     {!fitsInScene && !hasOverlap && (
                       <span className="text-[8px] bg-yellow-500/50 px-1 rounded mr-1">OUT</span>
+                    )}
+                    {(isFrameQueued || isVideoQueued) && (
+                      <Loader2 className="w-3 h-3 text-brand-400 animate-spin mr-1 flex-shrink-0" />
+                    )}
+                    {hasStartFrame && !hasVideo && !isFrameQueued && !isVideoQueued && !hasOverlap && fitsInScene && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mr-1 flex-shrink-0" title="Has frames" />
                     )}
                     {/* End edge handle */}
                     <div className={`absolute right-0 top-0 bottom-0 w-2 transition-colors ${isHoveredEnd ? 'bg-brand-500/50' : ''}`} />

@@ -1,11 +1,12 @@
-import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementReferenceImage, CameraSettings } from '@/types'
+import type { QueueItem, Scene, Frame, GeneratedVideo, WorldElement, ElementReferenceImage, CameraSettings, TranscriptSegment } from '@/types'
 
 interface ProcessorCallbacks {
   getState: () => {
     generationQueue: { items: QueueItem[]; isProcessing: boolean; isPaused: boolean }
-    clips: Array<{ id: string; sceneId?: string; title: string; startTime: number; endTime: number }>
+    clips: Array<{ id: string; sceneId?: string; segmentId?: string; title: string; startTime: number; endTime: number }>
     scenes: Scene[]
     frames: Record<string, Frame>
+    transcript: TranscriptSegment[]
     globalStyle: string
     modelSettings: { image: string; video: string }
     elements: WorldElement[]
@@ -106,6 +107,15 @@ async function generateFrame(
   // Resolve elements for this scene (if scene exists)
   const resolvedElements = scene ? callbacks.getResolvedElementsForScene(scene.id) : []
 
+  // Find lyrics for this clip's time range
+  const segment = clip.segmentId
+    ? state.transcript.find(s => s.id === clip.segmentId)
+    : state.transcript.find(s => {
+        const mid = (clip.startTime + clip.endTime) / 2
+        return mid >= s.start && mid < s.end
+      })
+  const lyricsText = segment?.text
+
   // Use custom prompt if provided, otherwise build from resolved elements
   let prompt: string
   if (customPrompt) {
@@ -121,6 +131,7 @@ async function generateFrame(
       byCategory.who && `Characters: ${byCategory.who.map(e => `${e.name}${e.description ? ` (${e.overrideDescription || e.description})` : ''}`).join(', ')}`,
       byCategory.what && `Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
       byCategory.why && `Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      lyricsText && `Lyrics: "${lyricsText}"`,
       state.globalStyle && `Style: ${state.globalStyle}`,
       frameType === 'end' && 'This is the ending frame of the scene.',
     ].filter(Boolean).join('. ')
@@ -133,6 +144,7 @@ async function generateFrame(
       scene.who?.length && `Characters: ${scene.who.join(', ')}`,
       scene.what && `Action: ${scene.what}`,
       scene.why && `Mood: ${scene.why}`,
+      lyricsText && `Lyrics: "${lyricsText}"`,
       state.globalStyle && `Style: ${state.globalStyle}`,
       frameType === 'end' && 'This is the ending frame of the scene.',
     ].filter(Boolean).join('. ')
@@ -140,6 +152,7 @@ async function generateFrame(
   } else {
     // No scene — build minimal prompt from clip info + global style
     const parts = [
+      lyricsText && `Lyrics: "${lyricsText}"`,
       state.globalStyle && `Style: ${state.globalStyle}`,
       frameType === 'end' && 'This is the ending frame.',
     ].filter(Boolean).join('. ')
@@ -231,6 +244,15 @@ async function generateVideo(
   // Resolve elements for motion prompt
   const resolvedElements = scene ? callbacks.getResolvedElementsForScene(scene.id) : []
 
+  // Find lyrics for this clip's time range
+  const segment = clip.segmentId
+    ? state.transcript.find(s => s.id === clip.segmentId)
+    : state.transcript.find(s => {
+        const mid = (clip.startTime + clip.endTime) / 2
+        return mid >= s.start && mid < s.end
+      })
+  const lyricsText = segment?.text
+
   // Use custom motion prompt if provided, otherwise build from resolved elements
   let motionPrompt: string
   if (customMotionPrompt) {
@@ -243,12 +265,14 @@ async function generateVideo(
     motionPrompt = [
       byCategory.what && `Action: ${byCategory.what.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
       byCategory.why && `Mood: ${byCategory.why.map(e => e.overrideDescription || e.description || e.name).join('; ')}`,
+      lyricsText && `Lyrics: "${lyricsText}"`,
       'Smooth cinematic motion',
     ].filter(Boolean).join('. ')
   } else {
     motionPrompt = [
       scene?.what && `Action: ${scene.what}`,
       scene?.why && `Mood: ${scene.why}`,
+      lyricsText && `Lyrics: "${lyricsText}"`,
       'Smooth cinematic motion',
     ].filter(Boolean).join('. ')
   }

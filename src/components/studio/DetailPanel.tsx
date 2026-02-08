@@ -3,10 +3,9 @@
 import { useState, useCallback } from 'react'
 import {
   X, ChevronDown, ChevronUp, Image, Video, Sparkles, Clock,
-  Check, Trash2, Play, Loader2, Clapperboard, Grid2x2
+  Check, Trash2, Play, Loader2, Clapperboard, Grid2x2, Eye, EyeOff
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
-import { SceneElementSelector } from '@/components/studio/SceneElementSelector'
 import { VariationPicker } from '@/components/studio/VariationPicker'
 import { formatTime } from '@/lib/utils'
 import type { Clip, Scene, Frame, GeneratedVideo } from '@/types'
@@ -36,7 +35,6 @@ export function DetailPanel({
     globalStyle,
     modelSettings,
     updateClip,
-    updateScene,
     setFrame,
     getFramesForClip,
     getVideosForClip,
@@ -52,6 +50,7 @@ export function DetailPanel({
   const isVideoQueued = isClipQueued(clip.id, 'video')
   const [activeTab, setActiveTab] = useState<'frames' | 'video' | 'properties'>('frames')
   const [expandedSection, setExpandedSection] = useState<'start' | 'end' | 'video' | null>('start')
+  const [showPromptPreview, setShowPromptPreview] = useState(false)
 
   // Variation picker state
   const [variationState, setVariationState] = useState<{
@@ -213,6 +212,28 @@ export function DetailPanel({
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'frames' && (
           <div className="space-y-6">
+            {/* Prompt Preview — shows what the AI will see */}
+            <button
+              onClick={() => setShowPromptPreview(!showPromptPreview)}
+              className="w-full flex items-center gap-2 text-xs text-white/40 hover:text-white/60 transition-colors"
+            >
+              {showPromptPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {showPromptPreview ? 'Hide' : 'Show'} Prompt Preview
+            </button>
+            {showPromptPreview && framePrompt && (
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-xs text-white/60 leading-relaxed space-y-1.5">
+                <p className="text-[10px] text-white/30 uppercase font-medium">What the AI will see:</p>
+                <p>{framePrompt}</p>
+                {scene && (
+                  <div className="pt-2 border-t border-white/5">
+                    <p className="text-[10px] text-white/30">Scene: {scene.title} · Elements: {
+                      getResolvedElementsForScene(scene.id).map(e => e.name).join(', ') || 'none'
+                    }</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Start Frame Section */}
             <div className="border border-white/10 rounded-lg overflow-hidden">
               <button
@@ -560,20 +581,22 @@ export function DetailPanel({
               </div>
             </div>
 
-            {/* Scene Properties */}
+            {/* Scene info (read-only link) */}
             {scene && (
               <div className="pt-4 border-t border-white/10">
-                <h3 className="text-sm font-medium mb-3">Scene: {scene.title}</h3>
-
-                <div className="space-y-3">
-                  {(['who', 'what', 'when', 'where', 'why'] as const).map((category) => (
-                    <SceneElementSelector
-                      key={category}
-                      sceneId={scene.id}
-                      category={category}
-                    />
-                  ))}
-                </div>
+                <p className="text-xs text-white/40">
+                  Scene: <span className="text-white/60">{scene.title}</span>
+                  <span className="text-white/30 ml-2">{formatTime(scene.startTime)} – {formatTime(scene.endTime)}</span>
+                </p>
+                {getResolvedElementsForScene(scene.id).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {getResolvedElementsForScene(scene.id).map(el => (
+                      <span key={el.id} className="px-1.5 py-0.5 rounded text-[10px] bg-white/10 text-white/50">
+                        {el.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

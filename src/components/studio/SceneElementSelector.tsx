@@ -2,19 +2,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import {
-  Users, Clapperboard, Clock, MapPin, Heart,
   Plus, X, ChevronDown, RotateCcw,
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
+import { CATEGORY_CONFIG } from '@/lib/category-config'
 import type { ElementCategory } from '@/types'
-
-const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: typeof Users; color: string; bgColor: string; placeholder: string }> = {
-  who: { label: 'Who', icon: Users, color: 'text-blue-400', bgColor: 'bg-blue-500/20', placeholder: 'Characters/subjects...' },
-  what: { label: 'What', icon: Clapperboard, color: 'text-orange-400', bgColor: 'bg-orange-500/20', placeholder: 'Action/event...' },
-  when: { label: 'When', icon: Clock, color: 'text-yellow-400', bgColor: 'bg-yellow-500/20', placeholder: 'Time period...' },
-  where: { label: 'Where', icon: MapPin, color: 'text-green-400', bgColor: 'bg-green-500/20', placeholder: 'Location...' },
-  why: { label: 'Why', icon: Heart, color: 'text-pink-400', bgColor: 'bg-pink-500/20', placeholder: 'Mood/motivation...' },
-}
 
 interface Props {
   sceneId: string

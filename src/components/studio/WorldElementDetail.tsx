@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react'
 import {
   Upload, Trash2, X, Image as ImageIcon,
+  Sparkles, Loader2, Wand2,
 } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { CATEGORY_CONFIG } from '@/lib/category-config'
@@ -14,7 +15,7 @@ interface WorldElementDetailViewProps {
 
 export function WorldElementDetailView({ elementId, onClose }: WorldElementDetailViewProps) {
   const {
-    elements, scenes, elementImages,
+    elements, scenes, elementImages, globalStyle, modelSettings,
     updateElement, deleteElement,
     setElementImage, deleteElementImage,
   } = useProjectStore()
@@ -22,6 +23,8 @@ export function WorldElementDetailView({ elementId, onClose }: WorldElementDetai
   const element = elements.find((e) => e.id === elementId)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false)
+  const [isSuggestingDesc, setIsSuggestingDesc] = useState(false)
 
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -43,6 +46,63 @@ export function WorldElementDetailView({ elementId, onClose }: WorldElementDetai
     reader.readAsDataURL(file)
     e.target.value = ''
   }, [element, setElementImage])
+
+  const handleGenerateImage = useCallback(async () => {
+    if (!element) return
+    setIsGeneratingImage(true)
+    try {
+      const res = await fetch('/api/generate-element-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: element.name,
+          description: element.description,
+          category: element.category,
+          globalStyle,
+          model: modelSettings.image,
+        }),
+      })
+      const data = await res.json()
+      if (data.image) {
+        const imageId = `elem-img-${Date.now()}`
+        setElementImage({
+          id: imageId,
+          elementId: element.id,
+          url: data.image.url,
+          source: 'generated',
+          createdAt: new Date().toISOString(),
+        })
+      }
+    } catch {
+      // silently fail — user sees no new image
+    } finally {
+      setIsGeneratingImage(false)
+    }
+  }, [element, globalStyle, modelSettings.image, setElementImage])
+
+  const handleSuggestDescription = useCallback(async () => {
+    if (!element) return
+    setIsSuggestingDesc(true)
+    try {
+      const res = await fetch('/api/suggest-element-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: element.name,
+          category: element.category,
+          globalStyle,
+        }),
+      })
+      const data = await res.json()
+      if (data.description) {
+        updateElement(element.id, { description: data.description })
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setIsSuggestingDesc(false)
+    }
+  }, [element, globalStyle, updateElement])
 
   if (!element) {
     return (
@@ -98,9 +158,24 @@ export function WorldElementDetailView({ elementId, onClose }: WorldElementDetai
 
       {/* Description */}
       <div>
-        <label className="text-xs text-white/40 uppercase tracking-wide block mb-2">
-          Description
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs text-white/40 uppercase tracking-wide">
+            Description
+          </label>
+          <button
+            onClick={handleSuggestDescription}
+            disabled={isSuggestingDesc || !element.name.trim()}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-brand-400/70 hover:text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+            title="AI suggest a visual description from the name"
+          >
+            {isSuggestingDesc ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Wand2 className="w-3 h-3" />
+            )}
+            {isSuggestingDesc ? 'Writing...' : 'Suggest'}
+          </button>
+        </div>
         <textarea
           value={element.description}
           onChange={(e) => updateElement(element.id, { description: e.target.value })}
@@ -118,13 +193,28 @@ export function WorldElementDetailView({ elementId, onClose }: WorldElementDetai
           <label className="text-xs text-white/40 uppercase tracking-wide">
             Reference Images
           </label>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-white/50 hover:text-white/70 hover:bg-white/5 rounded transition-colors"
-          >
-            <Upload className="w-3 h-3" />
-            Upload
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleGenerateImage}
+              disabled={isGeneratingImage || !element.name.trim()}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-brand-400/70 hover:text-brand-400 hover:bg-brand-500/10 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+              title="Generate a reference image with AI"
+            >
+              {isGeneratingImage ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3" />
+              )}
+              {isGeneratingImage ? 'Generating...' : 'Generate'}
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-white/50 hover:text-white/70 hover:bg-white/5 rounded transition-colors"
+            >
+              <Upload className="w-3 h-3" />
+              Upload
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -134,8 +224,14 @@ export function WorldElementDetailView({ elementId, onClose }: WorldElementDetai
           />
         </div>
 
-        {images.length > 0 ? (
+        {images.length > 0 || isGeneratingImage ? (
           <div className="grid grid-cols-3 gap-2">
+            {/* Generating placeholder */}
+            {isGeneratingImage && (
+              <div className="aspect-square rounded-lg bg-gradient-to-br from-brand-500/20 to-purple-500/20 border border-brand-500/30 flex items-center justify-center animate-pulse">
+                <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
+              </div>
+            )}
             {images.map((img) => (
               <div key={img.id} className="group relative aspect-square rounded-lg overflow-hidden bg-white/5">
                 <img

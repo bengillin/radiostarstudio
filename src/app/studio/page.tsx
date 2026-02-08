@@ -92,8 +92,7 @@ function StudioPageContent() {
   // Use store's multi-select, but keep a single "active" clip for detail panel
   const selectedClipIds = timeline?.selectedClipIds ?? []
   const selectedClipId = selectedClipIds.length > 0 ? selectedClipIds[selectedClipIds.length - 1] : null
-  const [framePrompt, setFramePrompt] = useState('')
-  const [motionPrompt, setMotionPrompt] = useState('')
+  const [defaultPrompt, setDefaultPrompt] = useState('')
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [rightPanelTab, setRightPanelTab] = useState<'library' | 'queue'>('library')
@@ -297,7 +296,7 @@ function StudioPageContent() {
     }
 
     const autoPrompt = parts.join('. ')
-    setFramePrompt(autoPrompt)
+    setDefaultPrompt(autoPrompt)
   }, [selectedClipId, selectedClip, selectedScene, transcript, globalStyle, elements, getResolvedElementsForScene])
 
   return (
@@ -497,10 +496,7 @@ function StudioPageContent() {
                     clip={selectedClip}
                     scene={selectedScene ?? undefined}
                     onClose={() => clearSelection()}
-                    framePrompt={framePrompt}
-                    setFramePrompt={setFramePrompt}
-                    motionPrompt={motionPrompt}
-                    setMotionPrompt={setMotionPrompt}
+                    defaultPrompt={defaultPrompt}
                   />
                 </div>
               ) : centerTab === 'lyrics' ? (

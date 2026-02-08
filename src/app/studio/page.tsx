@@ -22,6 +22,7 @@ import { ElementsPanel } from '@/components/studio/ElementsPanel'
 import { LyricsNavigator } from '@/components/studio/LyricsNavigator'
 import { StoryboardView } from '@/components/studio/StoryboardView'
 import { ScenesTab } from '@/components/studio/ScenesTab'
+import { PreviewPlayer } from '@/components/studio/PreviewPlayer'
 import { WorldElementDetailView } from '@/components/studio/WorldElementDetail'
 import { LyricsPanel } from '@/components/studio/LyricsPanel'
 import { CameraSettingsEditor } from '@/components/studio/CameraSettingsEditor'
@@ -487,8 +488,8 @@ function StudioPageContent() {
               ))}
             </div>
 
-            {/* Center content — priority: clip selected → detail, then tab-driven */}
-            <div className="flex-1 flex overflow-hidden">
+            {/* Center content — priority: clip selected → detail, then preview + tab content */}
+            <div className="flex-1 flex flex-col overflow-hidden">
               {selectedClip ? (
                 /* Clip selected — always show DetailPanel regardless of tab */
                 <div className="w-full h-full max-w-4xl mx-auto p-4">
@@ -499,37 +500,55 @@ function StudioPageContent() {
                     defaultPrompt={defaultPrompt}
                   />
                 </div>
-              ) : centerTab === 'lyrics' ? (
-                /* Lyrics tab — full editor */
-                !audioFile ? (
-                  <div className="w-full h-full flex items-center justify-center p-4">
-                    <label
-                      className={`w-full max-w-3xl aspect-video rounded-xl border border-dashed border-white/20 flex flex-col items-center justify-center cursor-pointer transition-colors ${
-                        isDraggingAudio ? 'bg-brand-500/10 border-brand-500/40' : 'hover:bg-white/5'
-                      }`}
-                      onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
-                      onDragLeave={() => setIsDraggingAudio(false)}
-                      onDrop={handleAudioDrop}
-                    >
-                      <input type="file" accept="audio/*" className="hidden" onChange={handleAudioFileSelect} />
-                      {isLoadingAudio ? (
-                        <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
-                      ) : (
-                        <Music className="w-12 h-12 text-white/20 mb-4" />
-                      )}
-                      <p className="text-lg text-white/60 font-medium">
-                        {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
-                      </p>
-                      <p className="text-sm text-white/30 mt-2">or click to browse</p>
-                    </label>
-                  </div>
-                ) : (
-                  <div className="w-full h-full overflow-y-auto p-4">
-                    <div className="max-w-3xl mx-auto">
-                      <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
+              ) : (
+                <>
+                  {/* Preview player — shown when audio loaded and clips exist */}
+                  {audioFile && clips.length > 0 && (
+                    <div className="flex-shrink-0 p-3 pb-0">
+                      <div className="max-w-3xl mx-auto" style={{ height: '280px' }}>
+                        <PreviewPlayer
+                          currentTime={currentTime}
+                          isPlaying={isPlaying}
+                          onTogglePlayback={togglePlayback}
+                          onSeek={handleSeek}
+                          duration={audioFile.duration}
+                        />
+                      </div>
                     </div>
-                  </div>
-                )
+                  )}
+
+                  {/* Tab content below preview */}
+                  <div className="flex-1 flex overflow-hidden min-h-0">
+                    {centerTab === 'lyrics' ? (
+                      !audioFile ? (
+                        <div className="w-full h-full flex items-center justify-center p-4">
+                          <label
+                            className={`w-full max-w-3xl aspect-video rounded-xl border border-dashed border-white/20 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                              isDraggingAudio ? 'bg-brand-500/10 border-brand-500/40' : 'hover:bg-white/5'
+                            }`}
+                            onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true) }}
+                            onDragLeave={() => setIsDraggingAudio(false)}
+                            onDrop={handleAudioDrop}
+                          >
+                            <input type="file" accept="audio/*" className="hidden" onChange={handleAudioFileSelect} />
+                            {isLoadingAudio ? (
+                              <Loader2 className="w-12 h-12 text-brand-400 animate-spin" />
+                            ) : (
+                              <Music className="w-12 h-12 text-white/20 mb-4" />
+                            )}
+                            <p className="text-lg text-white/60 font-medium">
+                              {isLoadingAudio ? 'Loading audio...' : 'Drop your audio here'}
+                            </p>
+                            <p className="text-sm text-white/30 mt-2">or click to browse</p>
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="w-full h-full overflow-y-auto p-4">
+                          <div className="max-w-3xl mx-auto">
+                            <LyricsPanel onSeek={handleSeek} currentTime={currentTime} />
+                          </div>
+                        </div>
+                      )
               ) : centerTab === 'scenes' ? (
                 <ScenesTab
                   expandedSceneId={expandedSceneId}
@@ -592,7 +611,10 @@ function StudioPageContent() {
                     </div>
                   )}
                 </div>
-              ) : null}
+                    ) : null}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

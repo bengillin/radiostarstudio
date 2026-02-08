@@ -22,6 +22,45 @@ function getVeoDuration(clipDuration?: number): VeoDuration {
   return 4
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function generateVeoVideo(ai: any, model: string, prompt: string, startFrame: { imageBytes: string; mimeType: string }, endFrame: { imageBytes: string; mimeType: string } | null, config: Record<string, unknown>) {
+  // Try with end frame (interpolation) if available
+  if (endFrame) {
+    try {
+      console.log('[generate-video] Attempting with interpolation (start + end frame)')
+      return await ai.models.generateVideos({
+        model,
+        prompt,
+        image: {
+          imageBytes: startFrame.imageBytes,
+          mimeType: startFrame.mimeType,
+        },
+        config: {
+          ...config,
+          lastFrame: {
+            imageBytes: endFrame.imageBytes,
+            mimeType: endFrame.mimeType,
+          },
+        },
+      })
+    } catch (e) {
+      console.log('[generate-video] Interpolation failed, falling back to single frame:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // Fallback: single start frame
+  console.log('[generate-video] Using single start frame mode')
+  return await ai.models.generateVideos({
+    model,
+    prompt,
+    image: {
+      imageBytes: startFrame.imageBytes,
+      mimeType: startFrame.mimeType,
+    },
+    config,
+  })
+}
+
 export async function POST(request: NextRequest) {
   console.log('[generate-video] API called')
 
@@ -107,25 +146,8 @@ ${interpolationNote}`
       resolution: '720p',
     }
 
-    // Add last frame for interpolation (Veo 3.1 feature)
-    if (endFrame) {
-      config.lastFrame = {
-        imageBytes: endFrame.imageBytes,
-        mimeType: endFrame.mimeType,
-      }
-      console.log('[generate-video] Interpolation mode: first + last frame')
-    }
-
-    // Generate video using Veo
-    let operation = await ai.models.generateVideos({
-      model: videoModel,
-      prompt: fullPrompt,
-      image: {
-        imageBytes: startFrame.imageBytes,
-        mimeType: startFrame.mimeType,
-      },
-      config,
-    })
+    // Generate video using Veo (try with interpolation first, fallback without)
+    let operation = await generateVeoVideo(ai, videoModel, fullPrompt, startFrame, endFrame, config)
 
     console.log('[generate-video] Video generation started, polling...')
 
@@ -134,7 +156,7 @@ ${interpolationNote}`
     let attempts = 0
 
     while (!operation.done && attempts < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, 10000)) // 10 second intervals
+      await new Promise((resolve) => setTimeout(resolve, 10000))
       attempts++
       console.log(`[generate-video] Polling attempt ${attempts}/${maxAttempts}`)
       operation = await ai.operations.getVideosOperation({ operation })
@@ -148,6 +170,9 @@ ${interpolationNote}`
       )
     }
 
+    console.log('[generate-video] Operation done. Response keys:', JSON.stringify(Object.keys(operation.response || {})))
+    console.log('[generate-video] Full operation response:', JSON.stringify(operation.response, null, 2)?.substring(0, 2000))
+
     if (operation.error) {
       const errorMessage = typeof operation.error === 'object' && operation.error !== null && 'message' in operation.error
         ? String(operation.error.message)
@@ -159,11 +184,21 @@ ${interpolationNote}`
       )
     }
 
-    const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri
+    // Try multiple response paths (API structure may vary)
+    const generatedVideos = operation.response?.generatedVideos || []
+    console.log('[generate-video] Generated videos count:', generatedVideos.length)
+    if (generatedVideos.length > 0) {
+      console.log('[generate-video] First video keys:', JSON.stringify(Object.keys(generatedVideos[0] || {})))
+      console.log('[generate-video] First video.video keys:', JSON.stringify(Object.keys(generatedVideos[0]?.video || {})))
+    }
+
+    const videoUri = generatedVideos[0]?.video?.uri
     if (!videoUri) {
-      console.log('[generate-video] No video URI in response')
+      // Check if video was filtered
+      const filterReason = generatedVideos[0]?.video?.filterReason || generatedVideos[0]?.filterReason
+      console.log('[generate-video] No video URI. Filter reason:', filterReason)
       return NextResponse.json(
-        { error: 'No video generated' },
+        { error: filterReason ? `Video filtered: ${filterReason}` : 'No video generated. The content may have been filtered.' },
         { status: 500 }
       )
     }
